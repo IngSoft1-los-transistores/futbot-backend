@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 """Configuracion de la aplicacion, leida desde el archivo .env."""
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -13,7 +14,7 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 1440
     
     #CORS
-    cors_origins: list[str] = ["http://localhost:5173"]
+    cors_origins_list: list[str] = ["http://localhost:5173"]
     
      # --- Simulacion de partidos ---
     match_tick_rate: int = 15
@@ -28,7 +29,7 @@ class Settings(BaseSettings):
     )
 
 
-
+settings = Settings()
 @lru_cache
 def get_settings() -> Settings:
     """Devuelve la configuracion, leyendo el .env una sola vez."""
