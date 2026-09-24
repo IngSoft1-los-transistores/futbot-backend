@@ -11,7 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base, generar_uuid
 
 if TYPE_CHECKING:
-    from app.models.enrollment import Room
+    from app.models.room import Room
 
 """Modelo de escuadra: los 6 jugadores elegidos y su comportamiento."""
 
@@ -34,16 +34,16 @@ class SquadEntry(Base):
             f"role IN ('{ROL_STARTER}', '{ROL_SUBSTITUTE}')",
             name="ck_squad_entries_rol_valido",
         ),
-        # El mismo jugador no puede ser convocado dos veces en la misma inscripcion
+        # El mismo jugador no puede ser convocado dos veces en la misma sala
         UniqueConstraint(
-            "enrollment_id", "player_id", name="ux_squad_entries_enrollment_player"
+            "room_id", "player_id", name="ux_squad_entries_room_player"
         ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generar_uuid)
 
-    enrollment_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("enrollments.id", ondelete="CASCADE"), nullable=False
+    room_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("rooms.id", ondelete="CASCADE"), nullable=False
     )
 
     # Sin CASCADE a proposito: el borrado de un jugador es logico.

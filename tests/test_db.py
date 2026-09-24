@@ -1,5 +1,3 @@
-
-
 import pytest
 from sqlalchemy import Engine, func, inspect, select, text
 from sqlalchemy.exc import IntegrityError
@@ -101,11 +99,10 @@ def test_la_carga_inicial_deja_los_tres_comportamientos(db: Session) -> None:
     )
     assert nombres == {"correr", "encontrar_pelota", "patear_pelota"}
 
-    # Todos quedan marcados como preprogramados y con la descripcion tomada del
-    # docstring de su archivo.
+    # Todos quedan marcados como preprogramados, con su codigo cargado.
     for comportamiento in db.scalars(select(Behavior)).all():
         assert comportamiento.is_preprogrammed is True
-        assert comportamiento.description
+        assert comportamiento.code
 
 
 def test_la_carga_inicial_no_duplica_al_repetirse(db: Session) -> None:

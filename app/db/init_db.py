@@ -26,15 +26,11 @@ def crear_tablas(engine: Engine) -> None:
     Base.metadata.create_all(bind=engine)
 
 
-def _leer_comportamiento(archivo: Path) -> tuple[str, str, str | None]:
-    """Extrae el nombre, el codigo y la descripcion de un archivo de defaults.
-    La descripcion sale del docstring del modulo
-    """
+def _leer_comportamiento(archivo: Path) -> tuple[str, str]:
+    """Extrae el nombre y el codigo de un archivo de comportamiento default."""
     codigo = archivo.read_text(encoding="utf-8")
-    # `ast.parse` ademas valida la sintaxis: un default mal escrito hace fallar
-    # el arranque con un error claro, en vez de guardarse roto en la base.
-    descripcion = ast.get_docstring(ast.parse(codigo))
-    return archivo.stem, codigo, descripcion
+    ast.parse(codigo)
+    return archivo.stem, codigo
 
 
 def cargar_comportamientos_por_defecto(db: Session) -> int:
@@ -47,7 +43,7 @@ def cargar_comportamientos_por_defecto(db: Session) -> int:
         if archivo.name == "__init__.py":
             continue
 
-        nombre, codigo, descripcion = _leer_comportamiento(archivo)
+        nombre, codigo = _leer_comportamiento(archivo)
 
         existente = db.scalars(
             select(Behavior).where(
@@ -60,18 +56,16 @@ def cargar_comportamientos_por_defecto(db: Session) -> int:
                 Behavior(
                     club_id=None,
                     name=nombre,
-                    description=descripcion,
                     code=codigo,
                     is_preprogrammed=True,
                 )
             )
             logger.info("Comportamiento por defecto cargado: %s", nombre)
-        elif existente.code != codigo or existente.description != descripcion:
+        elif existente.code != codigo:
             # El archivo cambio desde el ultimo arranque: se actualiza la fila
             # en lugar de crear una segunda con el mismo nombre. Asi editar un
             # default en el repositorio se refleja al reiniciar.
             existente.code = codigo
-            existente.description = descripcion
             logger.info("Comportamiento por defecto actualizado: %s", nombre)
 
     db.commit()

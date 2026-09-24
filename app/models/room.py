@@ -136,5 +136,5 @@ class Room(Base):
     )
 
     squad_entries: Mapped[list["SquadEntry"]] = relationship(
-    back_populates="enrollment", passive_deletes=True
+        back_populates="room", passive_deletes=True
     )
