@@ -3,5 +3,5 @@ def comportamiento(jugador):
         aliado = jugador.encontrar_aliado()
         jugador.patear_pelota(aliado)
     else:
-        pelota = jugador.encontrar_pelota()
-        jugador.correr(pelota)
+        arco = jugador.encontrar_arco_aliado()
+        jugador.correr(arco)
