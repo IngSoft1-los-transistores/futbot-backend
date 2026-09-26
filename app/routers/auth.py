@@ -1,0 +1,65 @@
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.core.security import hash_password
+from app.db.session import get_db
+from app.models.user import User
+from app.models.club import Club
+from app.schemas.auth import UserRead, UserRegister
+
+router = APIRouter(prefix="/api/auth", tags=["register"])
+
+
+@router.post(
+    "/register",
+    response_model=UserRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def register_user(
+    data: UserRegister,
+    db: Session = Depends(get_db),
+) -> UserRead:
+    usuario_existente = db.scalar(
+        select(User).where(
+            or_(
+                User.username == data.username,
+                User.email == data.email,
+            )
+        )
+    )
+
+    if usuario_existente is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="El usuario o email ya existe",
+        )
+
+    usuario = User(
+        username=data.username,
+        email=data.email,
+        password_hash=hash_password(data.password),
+    )
+    db.add(usuario)
+    db.flush()
+    
+    club = Club(
+        name=data.club_name,
+        avatar_url=data.avatar_url or "https://url-por-defecto.com/avatar.png",
+        ranking_points=0,
+        user_id=usuario.id,  # el ID del usuario al club
+    )
+    db.add(club)
+
+    try:
+        db.commit()
+        db.refresh(usuario)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="El usuario o email ya existe",
+        )
+
+    return usuario
