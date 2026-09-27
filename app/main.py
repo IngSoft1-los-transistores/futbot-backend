@@ -1,12 +1,28 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.config import settings
 from app.db.init_db import cargar_comportamientos_por_defecto, crear_tablas
 from app.db.session import SessionLocal, engine
-from app.routers import health
+from app.routers import friendly_rooms, health
+
+# Fallback error codes for exceptions raised without an explicit `error_code`
+# (framework errors, or an HTTPException whose detail is a plain string).
+DEFAULT_ERROR_CODES = {
+    status.HTTP_400_BAD_REQUEST: "BAD_REQUEST",
+    status.HTTP_401_UNAUTHORIZED: "UNAUTHORIZED",
+    status.HTTP_403_FORBIDDEN: "FORBIDDEN",
+    status.HTTP_404_NOT_FOUND: "NOT_FOUND",
+    status.HTTP_405_METHOD_NOT_ALLOWED: "METHOD_NOT_ALLOWED",
+    status.HTTP_409_CONFLICT: "CONFLICT",
+    status.HTTP_422_UNPROCESSABLE_ENTITY: "VALIDATION_ERROR",
+    status.HTTP_503_SERVICE_UNAVAILABLE: "SERVICE_UNAVAILABLE",
+}
 
 
 @asynccontextmanager
@@ -33,4 +49,42 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(
+    request: Request, exc: StarletteHTTPException
+) -> JSONResponse:
+    """Gives every HTTP error the contract shape `{detail, error_code}`.
+
+    Services pass `detail={"detail": ..., "error_code": ...}` to choose the
+    code; anything else (e.g. Starlette's 404 for unknown routes) gets a
+    code derived from the status.
+    """
+    if isinstance(exc.detail, dict) and "error_code" in exc.detail:
+        content = exc.detail
+    else:
+        content = {
+            "detail": str(exc.detail),
+            "error_code": DEFAULT_ERROR_CODES.get(exc.status_code, "HTTP_ERROR"),
+        }
+    return JSONResponse(
+        status_code=exc.status_code, content=content, headers=exc.headers
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """Malformed request payloads also follow the `{detail, error_code}` shape."""
+    messages = "; ".join(
+        f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+        for error in exc.errors()
+    )
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": messages, "error_code": "VALIDATION_ERROR"},
+    )
+
+
 app.include_router(health.router)
+app.include_router(friendly_rooms.router)
