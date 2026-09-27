@@ -34,18 +34,12 @@ from app.models.squad_entry import (
 
 """Business logic for friendly rooms."""
 
-# A friendly is always one home club against one away club.
 FRIENDLY_CLUBS = 2
-
-# Room states in which the match has already been started.
 STARTED_ROOM_STATES = (STATE_IN_PROGRESS, STATE_FINISHED)
-
-# Match states in which the lineup and its behaviors are locked.
 ACTIVE_MATCH_STATES = (ESTADO_PRE_MATCH, ESTADO_IN_PROGRESS, ESTADO_PAUSED)
 
 
 def _error(status_code: int, error_code: str, message: str) -> HTTPException:
-    """Builds an HTTPException in the contract error shape."""
     return HTTPException(
         status_code=status_code,
         detail={"detail": message, "error_code": error_code},
@@ -71,12 +65,7 @@ def _invalid_squad() -> HTTPException:
 def _validate_squads(
     rows: list[tuple[SquadEntry, Player, Behavior]], club_ids: set[str]
 ) -> None:
-    """Checks that each club brings exactly 3 starters and 3 substitutes,
-    all of them usable, each with a behavior the club is allowed to use.
-
-    Checked at start time and not only on join: between joining and starting,
-    a club may have deleted a player or a behavior.
-    """
+    """Each club needs 3 starters and 3 substitutes with usable players and behaviors."""
     roles_per_club: dict[str, Counter] = {club_id: Counter() for club_id in club_ids}
 
     for entry, player, behavior in rows:
@@ -84,8 +73,6 @@ def _validate_squads(
             raise _invalid_squad()
         if player.deleted_at is not None or player.is_playing:
             raise _invalid_squad()
-        # A behavior is usable if it is preprogrammed (no club) or owned by
-        # the player's club.
         if behavior.deleted_at is not None or behavior.club_id not in (
             None,
             player.club_id,
@@ -99,23 +86,11 @@ def _validate_squads(
 
 
 def _start_simulation(match_id: str) -> None:
-    """Hook where the match engine starts running the match.
-
-    No-op until the engine exists (SCRUM-40 runs the behaviors each tick,
-    SCRUM-42 broadcasts the state over `/ws/match/{match_id}`). It is called
-    only after the commit, so the engine never runs a match that was rolled
-    back. It must not block the request.
-    """
+    """Hook for the match engine (SCRUM-40). Must not block the request."""
 
 
 def start_friendly_match(db: Session, room_id: str, club: Club) -> Match:
-    """Starts the friendly match of a room on behalf of one of its clubs.
-
-    Validation order matters: nothing about the room's state is revealed to a
-    club that does not belong to it.
-    """
     room = db.get(Room, room_id)
-    # A league id is also "not found": this endpoint only knows friendlies.
     if room is None or room.type != TYPE_FRIENDLY:
         raise _error(
             status.HTTP_404_NOT_FOUND, "ROOM_NOT_FOUND", "La sala amistosa no existe"
@@ -148,7 +123,6 @@ def start_friendly_match(db: Session, room_id: str, club: Club) -> Match:
             "La sala no está lista para iniciar el partido",
         )
 
-    # Single query for both squads (no N+1 over players and behaviors).
     rows = db.execute(
         select(SquadEntry, Player, Behavior)
         .join(Player, SquadEntry.player_id == Player.id)
@@ -161,9 +135,7 @@ def start_friendly_match(db: Session, room_id: str, club: Club) -> Match:
     (away_club_id,) = club_ids - {home_club_id}
     now = ahora_utc()
 
-    # Conditional update: if both clubs start at the same time, both requests
-    # pass the checks above, but only one of them can move the room out of
-    # `ready_to_start`. A read-then-write would let both through.
+    # Conditional update: if both clubs start at once, only one request wins.
     result = db.execute(
         update(Room)
         .where(Room.id == room.id, Room.status == STATE_READY_TO_START)
@@ -173,8 +145,6 @@ def start_friendly_match(db: Session, room_id: str, club: Club) -> Match:
         db.rollback()
         raise _already_started()
 
-    # No pre-match stage this sprint: there is no interaction once started,
-    # so the lineup is the one chosen when creating/joining the room.
     match = Match(
         room_id=room.id,
         home_club_id=home_club_id,
@@ -196,14 +166,11 @@ def start_friendly_match(db: Session, room_id: str, club: Club) -> Match:
                 on_field=entry.role == ROL_STARTER,
             )
         )
-        # Locks the player: endpoints that edit or delete players must
-        # reject it while `is_playing` is set.
         player.is_playing = True
 
     try:
         db.commit()
     except IntegrityError:
-        # Second safety net: UNIQUE(room_id, home_club_id, away_club_id).
         db.rollback()
         raise _already_started()
 
@@ -212,11 +179,6 @@ def start_friendly_match(db: Session, room_id: str, club: Club) -> Match:
 
 
 def is_behavior_in_active_match(db: Session, behavior_id: str) -> bool:
-    """Tells whether a behavior is assigned to a player of an active match.
-
-    Endpoints that edit or delete behaviors must reject the operation when
-    this is true.
-    """
     return db.scalar(
         select(
             exists()

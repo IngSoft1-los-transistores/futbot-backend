@@ -11,8 +11,7 @@ from app.db.init_db import cargar_comportamientos_por_defecto, crear_tablas
 from app.db.session import SessionLocal, engine
 from app.routers import friendly_rooms, health
 
-# Fallback error codes for exceptions raised without an explicit `error_code`
-# (framework errors, or an HTTPException whose detail is a plain string).
+# Used when an HTTPException has no explicit error_code.
 DEFAULT_ERROR_CODES = {
     status.HTTP_400_BAD_REQUEST: "BAD_REQUEST",
     status.HTTP_401_UNAUTHORIZED: "UNAUTHORIZED",
@@ -53,12 +52,6 @@ app.add_middleware(
 async def http_exception_handler(
     request: Request, exc: StarletteHTTPException
 ) -> JSONResponse:
-    """Gives every HTTP error the contract shape `{detail, error_code}`.
-
-    Services pass `detail={"detail": ..., "error_code": ...}` to choose the
-    code; anything else (e.g. Starlette's 404 for unknown routes) gets a
-    code derived from the status.
-    """
     if isinstance(exc.detail, dict) and "error_code" in exc.detail:
         content = exc.detail
     else:
@@ -75,7 +68,6 @@ async def http_exception_handler(
 async def validation_exception_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
-    """Malformed request payloads also follow the `{detail, error_code}` shape."""
     messages = "; ".join(
         f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
         for error in exc.errors()

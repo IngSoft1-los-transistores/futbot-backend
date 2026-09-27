@@ -19,11 +19,6 @@ def start_friendly_room(
     db: Session = Depends(get_db),
     club: Club = Depends(get_current_club),
 ) -> FriendlyRoomStartRead:
-    """Starts the friendly match of the room (CU #30).
-
-    Either of the two clubs in the room can start it; the club comes from the
-    token, never from the URL.
-    """
     match = start_friendly_match(db, room_id, club)
     return FriendlyRoomStartRead(
         room_id=room_id, match_id=match.id, status=STATE_IN_PROGRESS

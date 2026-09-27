@@ -63,7 +63,6 @@ def create_behavior(db: Session, club_id: str | None, name: str) -> Behavior:
 
 
 def add_squad(db: Session, room: Room, club: Club, behavior: Behavior) -> list[Player]:
-    """Enrolls the club in the room with 3 starters and 3 substitutes."""
     db.add(Enrollment(room_id=room.id, club_id=club.id))
     players = [crear_player(db, club.id) for _ in range(6)]
     for index, player in enumerate(players):
@@ -114,7 +113,6 @@ def default_behavior(db: Session) -> Behavior:
 def ready_room(
     db: Session, club: Club, away_club: Club, default_behavior: Behavior
 ) -> Room:
-    """Friendly room with home (`club`) and away clubs, ready to start."""
     room = create_friendly_room(db, club, STATE_READY_TO_START)
     add_squad(db, room, club, default_behavior)
     add_squad(db, room, away_club, default_behavior)
@@ -123,11 +121,7 @@ def ready_room(
 
 @pytest.fixture
 def login_as(client: TestClient) -> Callable[[Club], None]:
-    """Authenticates the following requests as the given club.
-
-    Replaces the auth dependency, as real JWT verification belongs to the
-    login ticket. The `client` fixture clears the overrides afterwards.
-    """
+    """Authenticates as the given club (overrides the auth placeholder)."""
 
     def _login(club: Club) -> None:
         app.dependency_overrides[get_current_club] = lambda: club
@@ -313,9 +307,8 @@ def test_a_cancelled_room_is_not_ready(
 def test_a_concurrent_start_is_detected(
     engine: Engine, club: Club, ready_room: Room, db: Session
 ) -> None:
-    """Both clubs press start: the room was started by the other request
-    after this one read it. The conditional update must catch it."""
-    db.get(Room, ready_room.id)  # this request's (now stale) read
+    """The other club starts the room after this request read it."""
+    db.get(Room, ready_room.id)
     with engine.begin() as other_request:
         other_request.execute(
             update(Room)
