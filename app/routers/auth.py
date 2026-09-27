@@ -29,11 +29,14 @@ def register_user(
             )
         )
     )
+    club_existente = db.scalar(
+        select(Club).where(Club.name == data.club_name)
+    )
 
-    if usuario_existente is not None:
+    if usuario_existente is not None or club_existente is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="El usuario o email ya existe",
+            detail="El usuario, email o nombre del club ya existe",
         )
 
     usuario = User(
@@ -42,24 +45,23 @@ def register_user(
         password_hash=hash_password(data.password),
     )
     db.add(usuario)
-    db.flush()
-    
-    club = Club(
-        name=data.club_name,
-        avatar_url=data.avatar_url or "https://url-por-defecto.com/avatar.png",
-        ranking_points=0,
-        user_id=usuario.id,  # el ID del usuario al club
-    )
-    db.add(club)
 
     try:
+        db.flush()
+        club = Club(
+            name=data.club_name,
+            avatar_url=data.avatar_url or "https://url-por-defecto.com/avatar.png",
+            ranking_points=0,
+            user_id=usuario.id,  # el ID del usuario al club
+        )
+        db.add(club)
         db.commit()
         db.refresh(usuario)
     except IntegrityError:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="El usuario o email ya existe",
+            detail="El usuario, email o nombre del club ya existe",
         )
 
     return usuario
