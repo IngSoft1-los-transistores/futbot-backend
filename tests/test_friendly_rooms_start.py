@@ -1,11 +1,14 @@
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from jose import jwt
 from sqlalchemy import Engine, func, select, update
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.deps import get_current_club
 from app.db.base import ahora_utc
 from app.main import app
@@ -224,6 +227,62 @@ def test_start_without_authentication_is_rejected(
 
     assert_error(response, 401, "INVALID_TOKEN")
     assert response.headers["www-authenticate"] == "Bearer"
+    assert count(db, Match) == 0
+
+
+def make_token(
+    user_id: str,
+    secret: str | None = None,
+    expires_in: timedelta | None = timedelta(minutes=5),
+) -> str:
+    """Builds a token like the login endpoint does (`sub` = user id)."""
+    settings = get_settings()
+    claims = {"sub": user_id}
+    if expires_in is not None:
+        claims["exp"] = datetime.now(timezone.utc) + expires_in
+    return jwt.encode(
+        claims, secret or settings.jwt_secret_key, algorithm=settings.jwt_algorithm
+    )
+
+
+def test_start_with_a_valid_token(
+    client: TestClient, club: Club, ready_room: Room
+) -> None:
+    response = client.post(
+        start_url(ready_room.id),
+        headers={"Authorization": f"Bearer {make_token(club.user_id)}"},
+    )
+
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "authorization",
+    [
+        "Bearer not-a-jwt",
+        "Basic dXNlcjpwYXNz",
+        "Bearer {wrong_secret}",
+        "Bearer {expired}",
+        "Bearer {without_exp}",
+        "Bearer {unknown_user}",
+    ],
+)
+def test_start_with_an_invalid_token_is_rejected(
+    client: TestClient, club: Club, ready_room: Room, db: Session, authorization: str
+) -> None:
+    tokens = {
+        "wrong_secret": make_token(club.user_id, secret="another-secret"),
+        "expired": make_token(club.user_id, expires_in=timedelta(minutes=-1)),
+        "without_exp": make_token(club.user_id, expires_in=None),
+        "unknown_user": make_token("user-that-does-not-exist"),
+    }
+
+    response = client.post(
+        start_url(ready_room.id),
+        headers={"Authorization": authorization.format(**tokens)},
+    )
+
+    assert_error(response, 401, "INVALID_TOKEN")
     assert count(db, Match) == 0
 
 

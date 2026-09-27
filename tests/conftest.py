@@ -1,4 +1,7 @@
+import os
 
+# Test-only secret, set before importing the app.
+os.environ["JWT_SECRET_KEY"] = "test-only-secret-key-not-for-production"
 
 from collections.abc import Generator
 
