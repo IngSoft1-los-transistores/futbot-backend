@@ -7,7 +7,7 @@ from app.db.init_db import cargar_comportamientos_por_defecto
 from app.models.behavior import Behavior
 from app.models.club import Club
 from app.models.player import Player
-from tests.test_conf import crear_player
+from tests.conftest import crear_player
 
 """Tests del schema: tablas, restricciones de integridad y carga inicial."""
 
