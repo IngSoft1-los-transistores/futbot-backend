@@ -10,12 +10,14 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.deps import get_current_club
-from app.db.base import ahora_utc
+from app.db.base import ahora_utc as utc_now
 from app.main import app
 from app.models.behavior import Behavior
 from app.models.club import Club
 from app.models.enrollment import Enrollment
-from app.models.match import ESTADO_FINISHED, ESTADO_IN_PROGRESS, Match
+from app.models.match import ESTADO_FINISHED as MATCH_FINISHED
+from app.models.match import ESTADO_IN_PROGRESS as MATCH_IN_PROGRESS
+from app.models.match import Match
 from app.models.match_player import MatchPlayer
 from app.models.player import Player
 from app.models.room import (
@@ -27,13 +29,15 @@ from app.models.room import (
     TYPE_PUBLIC,
     Room,
 )
-from app.models.squad_entry import ROL_STARTER, ROL_SUBSTITUTE, SquadEntry
+from app.models.squad_entry import ROL_STARTER as ROLE_STARTER
+from app.models.squad_entry import ROL_SUBSTITUTE as ROLE_SUBSTITUTE
+from app.models.squad_entry import SquadEntry
 from app.models.user import User
 from app.services.friendly_rooms import (
     is_behavior_in_active_match,
     start_friendly_match,
 )
-from tests.conftest import crear_player
+from tests.conftest import crear_player as create_player
 
 """Tests for POST /api/friendly/rooms/{room_id}/start."""
 
@@ -67,14 +71,14 @@ def create_behavior(db: Session, club_id: str | None, name: str) -> Behavior:
 
 def add_squad(db: Session, room: Room, club: Club, behavior: Behavior) -> list[Player]:
     db.add(Enrollment(room_id=room.id, club_id=club.id))
-    players = [crear_player(db, club.id) for _ in range(6)]
+    players = [create_player(db, club.id) for _ in range(6)]
     for index, player in enumerate(players):
         db.add(
             SquadEntry(
                 room_id=room.id,
                 player_id=player.id,
                 behavior_id=behavior.id,
-                role=ROL_STARTER if index < 3 else ROL_SUBSTITUTE,
+                role=ROLE_STARTER if index < 3 else ROLE_SUBSTITUTE,
             )
         )
     db.commit()
@@ -179,7 +183,7 @@ def test_start_moves_room_and_match_to_in_progress(
     assert ready_room.started_at is not None
 
     match = db.scalars(select(Match)).one()
-    assert match.status == ESTADO_IN_PROGRESS
+    assert match.status == MATCH_IN_PROGRESS
     assert match.home_club_id == club.id
     assert match.away_club_id == away_club.id
     assert match.duration_seconds == MATCH_DURATION_MINUTES * 60
@@ -299,7 +303,7 @@ def test_a_league_room_is_not_found(
 ) -> None:
     league = Room(
         type=TYPE_PUBLIC,
-        name="Liga",
+        name="League",
         creator_club_id=club.id,
         min_clubs=3,
         max_clubs=4,
@@ -372,7 +376,7 @@ def test_a_concurrent_start_is_detected(
         other_request.execute(
             update(Room)
             .where(Room.id == ready_room.id)
-            .values(status=STATE_IN_PROGRESS, started_at=ahora_utc())
+            .values(status=STATE_IN_PROGRESS, started_at=utc_now())
         )
 
     with pytest.raises(HTTPException) as error:
@@ -402,7 +406,7 @@ def test_a_squad_with_only_two_starters_is_invalid(
     starter = db.scalars(
         select(SquadEntry)
         .join(Player, SquadEntry.player_id == Player.id)
-        .where(Player.club_id == club.id, SquadEntry.role == ROL_STARTER)
+        .where(Player.club_id == club.id, SquadEntry.role == ROLE_STARTER)
     ).first()
     db.delete(starter)
     db.commit()
@@ -415,7 +419,7 @@ def test_a_squad_with_a_deleted_player_is_invalid(
     client: TestClient, login_as, club: Club, away_club: Club, ready_room: Room, db: Session
 ) -> None:
     player = db.scalars(select(Player).where(Player.club_id == away_club.id)).first()
-    player.deleted_at = ahora_utc()
+    player.deleted_at = utc_now()
     db.commit()
     login_as(club)
 
@@ -430,7 +434,7 @@ def test_a_squad_with_a_player_from_a_third_club_is_invalid(
         .join(Player, SquadEntry.player_id == Player.id)
         .where(Player.club_id == club.id)
     ).first()
-    entry.player_id = crear_player(db, create_club(db, "third").id).id
+    entry.player_id = create_player(db, create_club(db, "third").id).id
     db.commit()
     login_as(club)
 
@@ -468,7 +472,7 @@ def test_a_squad_with_a_deleted_behavior_is_invalid(
     client: TestClient, login_as, club: Club, ready_room: Room, db: Session
 ) -> None:
     own_behavior = create_behavior(db, club.id, "deleted")
-    own_behavior.deleted_at = ahora_utc()
+    own_behavior.deleted_at = utc_now()
     entry = db.scalars(
         select(SquadEntry)
         .join(Player, SquadEntry.player_id == Player.id)
@@ -501,6 +505,6 @@ def test_behaviors_are_locked_only_while_the_match_is_active(
     assert is_behavior_in_active_match(db, default_behavior.id)
     assert not is_behavior_in_active_match(db, unused_behavior.id)
 
-    db.execute(update(Match).values(status=ESTADO_FINISHED))
+    db.execute(update(Match).values(status=MATCH_FINISHED))
     db.commit()
     assert not is_behavior_in_active_match(db, default_behavior.id)

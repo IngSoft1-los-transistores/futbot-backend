@@ -5,14 +5,14 @@ from sqlalchemy import exists, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.base import ahora_utc
+from app.db.base import ahora_utc as utc_now
 from app.models.behavior import Behavior
 from app.models.club import Club
 from app.models.enrollment import Enrollment
 from app.models.match import (
-    ESTADO_IN_PROGRESS,
-    ESTADO_PAUSED,
-    ESTADO_PRE_MATCH,
+    ESTADO_IN_PROGRESS as MATCH_IN_PROGRESS,
+    ESTADO_PAUSED as MATCH_PAUSED,
+    ESTADO_PRE_MATCH as MATCH_PRE_MATCH,
     Match,
 )
 from app.models.match_player import MatchPlayer
@@ -25,10 +25,10 @@ from app.models.room import (
     Room,
 )
 from app.models.squad_entry import (
-    CANTIDAD_STARTERS,
-    CANTIDAD_SUBSTITUTES,
-    ROL_STARTER,
-    ROL_SUBSTITUTE,
+    CANTIDAD_STARTERS as STARTERS_COUNT,
+    CANTIDAD_SUBSTITUTES as SUBSTITUTES_COUNT,
+    ROL_STARTER as ROLE_STARTER,
+    ROL_SUBSTITUTE as ROLE_SUBSTITUTE,
     SquadEntry,
 )
 
@@ -36,7 +36,7 @@ from app.models.squad_entry import (
 
 FRIENDLY_CLUBS = 2
 STARTED_ROOM_STATES = (STATE_IN_PROGRESS, STATE_FINISHED)
-ACTIVE_MATCH_STATES = (ESTADO_PRE_MATCH, ESTADO_IN_PROGRESS, ESTADO_PAUSED)
+ACTIVE_MATCH_STATES = (MATCH_PRE_MATCH, MATCH_IN_PROGRESS, MATCH_PAUSED)
 
 
 def _error(status_code: int, error_code: str, message: str) -> HTTPException:
@@ -80,7 +80,7 @@ def _validate_squads(
             raise _invalid_squad()
         roles_per_club[player.club_id][entry.role] += 1
 
-    expected = Counter({ROL_STARTER: CANTIDAD_STARTERS, ROL_SUBSTITUTE: CANTIDAD_SUBSTITUTES})
+    expected = Counter({ROLE_STARTER: STARTERS_COUNT, ROLE_SUBSTITUTE: SUBSTITUTES_COUNT})
     if any(roles != expected for roles in roles_per_club.values()):
         raise _invalid_squad()
 
@@ -133,7 +133,7 @@ def start_friendly_match(db: Session, room_id: str, club: Club) -> Match:
 
     home_club_id = room.creator_club_id
     (away_club_id,) = club_ids - {home_club_id}
-    now = ahora_utc()
+    now = utc_now()
 
     # Conditional update: if both clubs start at once, only one request wins.
     result = db.execute(
@@ -149,7 +149,7 @@ def start_friendly_match(db: Session, room_id: str, club: Club) -> Match:
         room_id=room.id,
         home_club_id=home_club_id,
         away_club_id=away_club_id,
-        status=ESTADO_IN_PROGRESS,
+        status=MATCH_IN_PROGRESS,
         duration_seconds=room.match_duration_minutes * 60,
         started_at=now,
     )
@@ -163,7 +163,7 @@ def start_friendly_match(db: Session, room_id: str, club: Club) -> Match:
                 club_id=player.club_id,
                 player_id=player.id,
                 behavior_id=entry.behavior_id,
-                on_field=entry.role == ROL_STARTER,
+                on_field=entry.role == ROLE_STARTER,
             )
         )
         player.is_playing = True
