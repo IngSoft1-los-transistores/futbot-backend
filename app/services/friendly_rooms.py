@@ -31,6 +31,11 @@ from app.models.squad_entry import (
     ROL_SUBSTITUTE as ROLE_SUBSTITUTE,
     SquadEntry,
 )
+from app.schemas.friendly_room import (
+    FriendlyRoomClubRead,
+    FriendlyRoomPlayerRead,
+    FriendlyRoomRead,
+)
 
 """Business logic for friendly rooms."""
 
@@ -89,7 +94,8 @@ def _start_simulation(match_id: str) -> None:
     """Hook for the match engine (SCRUM-40). Must not block the request."""
 
 
-def start_friendly_match(db: Session, room_id: str, club: Club) -> Match:
+def _get_room_for_member(db: Session, room_id: str, club: Club) -> tuple[Room, set[str]]:
+    """Returns the friendly room and its club ids, or 404/403."""
     room = db.get(Room, room_id)
     if room is None or room.type != TYPE_FRIENDLY:
         raise _error(
@@ -105,6 +111,58 @@ def start_friendly_match(db: Session, room_id: str, club: Club) -> Match:
             "NOT_ROOM_MEMBER",
             "Tu club no pertenece a esta sala",
         )
+    return room, club_ids
+
+
+def _load_squads(db: Session, room_id: str) -> list[tuple[SquadEntry, Player, Behavior]]:
+    return db.execute(
+        select(SquadEntry, Player, Behavior)
+        .join(Player, SquadEntry.player_id == Player.id)
+        .join(Behavior, SquadEntry.behavior_id == Behavior.id)
+        .where(SquadEntry.room_id == room_id)
+    ).tuples().all()
+
+
+def get_friendly_room(db: Session, room_id: str, club: Club) -> FriendlyRoomRead:
+    room, club_ids = _get_room_for_member(db, room_id, club)
+    clubs = {
+        c.id: c
+        for c in db.scalars(select(Club).where(Club.id.in_(club_ids | {room.creator_club_id})))
+    }
+    rows = _load_squads(db, room.id)
+    match_id = db.scalar(select(Match.id).where(Match.room_id == room.id))
+
+    def club_read(club_id: str) -> FriendlyRoomClubRead:
+        players = [
+            FriendlyRoomPlayerRead(
+                player_id=player.id,
+                name=player.name,
+                role=entry.role,
+                behavior_id=behavior.id,
+                behavior_name=behavior.name,
+            )
+            for entry, player, behavior in rows
+            if player.club_id == club_id
+        ]
+        # Starters first.
+        players.sort(key=lambda p: p.role != ROLE_STARTER)
+        return FriendlyRoomClubRead(
+            club_id=club_id, club_name=clubs[club_id].name, players=players
+        )
+
+    away_ids = club_ids - {room.creator_club_id}
+    return FriendlyRoomRead(
+        room_id=room.id,
+        room_code=room.code,
+        status=room.status,
+        match_id=match_id,
+        home_club=club_read(room.creator_club_id),
+        away_club=club_read(next(iter(away_ids))) if away_ids else None,
+    )
+
+
+def start_friendly_match(db: Session, room_id: str, club: Club) -> Match:
+    room, club_ids = _get_room_for_member(db, room_id, club)
 
     if room.status in STARTED_ROOM_STATES:
         raise _already_started()
@@ -123,12 +181,7 @@ def start_friendly_match(db: Session, room_id: str, club: Club) -> Match:
             "La sala no está lista para iniciar el partido",
         )
 
-    rows = db.execute(
-        select(SquadEntry, Player, Behavior)
-        .join(Player, SquadEntry.player_id == Player.id)
-        .join(Behavior, SquadEntry.behavior_id == Behavior.id)
-        .where(SquadEntry.room_id == room.id)
-    ).tuples().all()
+    rows = _load_squads(db, room.id)
     _validate_squads(rows, club_ids)
 
     home_club_id = room.creator_club_id

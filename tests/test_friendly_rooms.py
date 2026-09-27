@@ -39,7 +39,7 @@ from app.services.friendly_rooms import (
 )
 from tests.conftest import crear_player as create_player
 
-"""Tests for POST /api/friendly/rooms/{room_id}/start."""
+"""Tests for the friendly room endpoints."""
 
 MATCH_DURATION_MINUTES = 5
 
@@ -508,3 +508,89 @@ def test_behaviors_are_locked_only_while_the_match_is_active(
     db.execute(update(Match).values(status=MATCH_FINISHED))
     db.commit()
     assert not is_behavior_in_active_match(db, default_behavior.id)
+
+
+# --- GET /api/friendly/rooms/{room_id} ---
+
+
+def room_url(room_id: str) -> str:
+    return f"/api/friendly/rooms/{room_id}"
+
+
+def test_read_a_ready_room(
+    client: TestClient,
+    login_as,
+    club: Club,
+    away_club: Club,
+    ready_room: Room,
+    default_behavior: Behavior,
+) -> None:
+    login_as(club)
+
+    response = client.get(room_url(ready_room.id))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["room_id"] == ready_room.id
+    assert body["status"] == STATE_READY_TO_START
+    assert body["match_id"] is None
+    assert body["home_club"]["club_id"] == club.id
+    assert body["home_club"]["club_name"] == club.name
+    assert body["away_club"]["club_id"] == away_club.id
+
+    players = body["home_club"]["players"]
+    assert [p["role"] for p in players] == [ROLE_STARTER] * 3 + [ROLE_SUBSTITUTE] * 3
+    assert players[0]["behavior_id"] == default_behavior.id
+    assert players[0]["behavior_name"] == default_behavior.name
+
+
+def test_read_a_room_without_guest(
+    client: TestClient,
+    login_as,
+    club: Club,
+    default_behavior: Behavior,
+    db: Session,
+) -> None:
+    room = create_friendly_room(db, club, STATE_WAITING_GUEST)
+    add_squad(db, room, club, default_behavior)
+    login_as(club)
+
+    body = client.get(room_url(room.id)).json()
+
+    assert body["status"] == STATE_WAITING_GUEST
+    assert body["away_club"] is None
+    assert len(body["home_club"]["players"]) == 6
+
+
+def test_read_a_started_room_includes_the_match(
+    client: TestClient, login_as, away_club: Club, ready_room: Room
+) -> None:
+    login_as(away_club)
+    match_id = client.post(start_url(ready_room.id)).json()["match_id"]
+
+    body = client.get(room_url(ready_room.id)).json()
+
+    assert body["status"] == STATE_IN_PROGRESS
+    assert body["match_id"] == match_id
+
+
+def test_read_a_room_requires_authentication(
+    client: TestClient, ready_room: Room
+) -> None:
+    assert_error(client.get(room_url(ready_room.id)), 401, "INVALID_TOKEN")
+
+
+def test_read_an_unknown_room_is_not_found(
+    client: TestClient, login_as, club: Club
+) -> None:
+    login_as(club)
+
+    assert_error(client.get(room_url("room-that-does-not-exist")), 404, "ROOM_NOT_FOUND")
+
+
+def test_read_a_room_of_another_club_is_forbidden(
+    client: TestClient, login_as, ready_room: Room, db: Session
+) -> None:
+    login_as(create_club(db, "outsider"))
+
+    assert_error(client.get(room_url(ready_room.id)), 403, "NOT_ROOM_MEMBER")
