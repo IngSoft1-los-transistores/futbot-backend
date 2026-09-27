@@ -9,7 +9,7 @@ from app.services.auth import InvalidCredentialsError, MissingClubError, login
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-@router.post("/login", response_model=LoginResponse)
+@router.post("/login", response_model=LoginResponse, status_code=status.HTTP_200_OK)
 def login_endpoint(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
     try:
         return login(db, payload.email, payload.password.get_secret_value())
