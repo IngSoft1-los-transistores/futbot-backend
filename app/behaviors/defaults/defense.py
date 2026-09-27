@@ -1,4 +1,4 @@
-def comportamiento(jugador):
+def behavior(jugador):
     if jugador.tengo_pelota():
         aliado = jugador.encontrar_aliado()
         jugador.patear_pelota(aliado)

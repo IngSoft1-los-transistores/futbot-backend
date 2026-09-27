@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.behaviors.loader import precargar_preprogramados
 from app.core.config import settings
 from app.db.init_db import cargar_comportamientos_por_defecto, crear_tablas
 from app.db.session import SessionLocal, engine
@@ -17,6 +18,7 @@ async def lifespan(app: FastAPI):
     db = SessionLocal()
     try:
         cargar_comportamientos_por_defecto(db)
+        precargar_preprogramados(db)
     finally:
         db.close()
 
