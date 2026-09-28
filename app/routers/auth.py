@@ -8,6 +8,7 @@ from app.db.session import get_db
 from app.models.user import User
 from app.models.club import Club
 from app.schemas.auth import UserRead, UserRegister
+from app.services.auth_services import create_user_with_club
 
 router = APIRouter(prefix="/api/auth", tags=["register"])
 
@@ -21,7 +22,7 @@ def register_user(
     data: UserRegister,
     db: Session = Depends(get_db),
 ) -> UserRead:
-    usuario_existente = db.scalar(
+    """usuario_existente = db.scalar(
         select(User).where(
             or_(
                 User.username == data.username,
@@ -63,5 +64,5 @@ def register_user(
             status_code=status.HTTP_409_CONFLICT,
             detail="El usuario, email o nombre del club ya existe",
         )
-
-    return usuario
+"""
+    return create_user_with_club(db, data)
