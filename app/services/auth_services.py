@@ -39,7 +39,7 @@ def create_user_with_club(db: Session, user_data: UserRegister) -> User:
         db.flush()
         club = Club(
             name=user_data.club_name,
-            avatar_url=user_data.avatar_url or "https://url-por-defecto.com/avatar.png",
+            avatar_url=user_data.avatar_url or "1",
             ranking_points=0,
             user_id=user.id,
         )
