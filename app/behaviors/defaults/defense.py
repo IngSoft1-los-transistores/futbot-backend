@@ -1,7 +1,7 @@
-def behavior(jugador):
-    if jugador.tengo_pelota():
-        aliado = jugador.encontrar_aliado()
-        jugador.patear_pelota(aliado)
+def behavior(player):
+    if player.tengo_pelota():
+        aliado = player.encontrar_aliado()
+        player.patear_pelota(aliado)
     else:
-        pelota = jugador.encontrar_pelota()
-        jugador.correr(pelota)
+        pelota = player.encontrar_pelota()
+        player.correr(pelota)

@@ -1,5 +1,3 @@
-
-
 import concurrent.futures
 import logging
 
@@ -18,28 +16,28 @@ _pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
 """Punto de entrada publico del modulo de comportamientos.
 """
 
-def ejecutar_comportamiento(jugador_id: str, engine: IMatchEngine) -> None:
+def ejecutar_comportamiento(player_id: str, engine: IMatchEngine) -> None:
     """Ejecuta, para un jugador puntual, el comportamiento que tiene asignado.
     """
-    behavior_id = engine.comportamiento_asignado(jugador_id)
+    behavior_id = engine.assigned_behavior(player_id)
 
     try:
         funcion = obtener_funcion_comportamiento(behavior_id)
     except ComportamientoNoEncontrado as e:
-        logger.warning("Comportamiento no encontrado para %s: %s", jugador_id, e)
-        engine.registrar_error(jugador_id, str(e))
+        logger.warning("Comportamiento no encontrado para %s: %s", player_id, e)
+        engine.register_error(player_id, str(e))
         return
 
-    proxy = JugadorAPI(jugador_id, engine)
+    proxy = JugadorAPI(player_id, engine)
     future = _pool.submit(funcion, proxy)
 
     try:
         future.result(timeout=TIMEOUT_SEGUNDOS)
     except concurrent.futures.TimeoutError:
-        logger.warning("Timeout ejecutando comportamiento de %s", jugador_id)
-        engine.registrar_error(jugador_id, "timeout")
+        logger.warning("Timeout ejecutando comportamiento de %s", player_id)
+        engine.register_error(player_id, "timeout")
     except Exception as e:  # noqa: BLE001 -- cualquier error del codigo ejecutado
         logger.warning(
-            "Excepcion ejecutando comportamiento de %s: %s", jugador_id, e
+            "Excepcion ejecutando comportamiento de %s: %s", player_id, e
         )
-        engine.registrar_error(jugador_id, f"excepcion: {e}")
+        engine.register_error(player_id, f"excepcion: {e}")

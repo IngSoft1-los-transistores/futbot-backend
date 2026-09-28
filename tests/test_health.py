@@ -11,7 +11,7 @@ def test_health_responde_ok_con_la_base_conectada(client: TestClient) -> None:
     respuesta = client.get("/api/health")
 
     assert respuesta.status_code == 200
-    assert respuesta.json() == {"status": "ok", "database_connected": True}
+    assert respuesta.json() == {"status": "ok", "databaseConnected": True}
 
 
 def test_health_no_requiere_autenticacion(client: TestClient) -> None:
@@ -46,14 +46,12 @@ def test_el_preflight_permite_el_header_de_autorizacion(client: TestClient) -> N
 
 
 def test_los_errores_usan_el_formato_unico_del_contrato(client: TestClient) -> None:
-    """Todo error trae `detail` y `error_code`, como exige el contrato.
+    """Todo error trae `detail` y `errorCode`, como exige el contrato.
     """
     respuesta = client.get("/api/ruta-que-no-existe")
 
     assert respuesta.status_code == 404
 
     cuerpo = respuesta.json()
-    assert cuerpo["error_code"] == "NOT_FOUND"
+    assert cuerpo["errorCode"] == "NOT_FOUND"
     assert isinstance(cuerpo["detail"], str)
-
-    assert "errorCode" not in cuerpo
