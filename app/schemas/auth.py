@@ -10,8 +10,15 @@ class UserRegister(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=20)
     # Datos club
-    club_name: str = Field(min_length=3, max_length=50)
-    avatar_url: Optional[str] = None # Puede venir vacío
+    club_name: str = Field(
+        min_length=3, 
+        max_length=50,
+        alias="clubName",
+    )
+    avatar_url: str | None = Field( # Puede venir vacío
+        default=None,
+        alias="avatar",
+    )
 
 # Como guarda los datos
 class ClubRead(BaseModel):
