@@ -3,7 +3,7 @@ from sqlalchemy import Engine, func, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.init_db import cargar_comportamientos_por_defecto
+from app.db.init_db import _leer_comportamiento, cargar_comportamientos_por_defecto
 from app.models.behavior import Behavior
 from app.models.club import Club
 from app.models.player import Player
@@ -115,3 +115,11 @@ def test_la_carga_inicial_no_duplica_al_repetirse(db: Session) -> None:
 
     assert cantidad == 3
     assert db.scalar(select(func.count()).select_from(Behavior)) == 3
+
+
+@pytest.mark.parametrize("codigo", ["", " \n\t"])
+def test_rechaza_archivos_de_comportamiento_vacios(tmp_path, codigo) -> None:
+    archivo = tmp_path / "vacio.py"
+    archivo.write_text(codigo, encoding="utf-8")
+    with pytest.raises(ValueError, match="vacio.py tiene codigo vacio"):
+        _leer_comportamiento(archivo)

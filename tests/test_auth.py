@@ -61,7 +61,7 @@ def test_login_invalid_credentials(
 ) -> None:
     response = client.post("/api/auth/login", json={"email": email, "password": password})
     assert response.status_code == 401
-    assert response.json() == {"detail": "Credenciales inválidas"}
+    assert response.json() == {"detail": "Credenciales inválidas", "error_code": "UNAUTHORIZED"}
     assert response.headers["www-authenticate"] == "Bearer"
 
 
@@ -74,7 +74,7 @@ def test_login_without_club(client: TestClient, db: Session, login_user: User) -
         json={"email": login_user.email, "password": "correct-password"},
     )
     assert response.status_code == 409
-    assert response.json() == {"detail": "La cuenta no tiene un club asociado"}
+    assert response.json() == {"detail": "La cuenta no tiene un club asociado", "error_code": "CONFLICT"}
 
 
 @pytest.mark.parametrize("payload", [{}, {"email": "login@futbot.test"}])

@@ -29,6 +29,8 @@ def crear_tablas(engine: Engine) -> None:
 def _leer_comportamiento(archivo: Path) -> tuple[str, str]:
     """Extrae el nombre y el codigo de un archivo de comportamiento default."""
     codigo = archivo.read_text(encoding="utf-8")
+    if not codigo.strip():
+        raise ValueError(f"El comportamiento {archivo.name} tiene codigo vacio")
     ast.parse(codigo)
     return archivo.stem, codigo
 
