@@ -1,5 +1,5 @@
 import math
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 
 from app.behaviors.interfaces import IMatchEngine
 from app.schemas.coord import Coord
@@ -26,7 +26,7 @@ class MatchEngine(IMatchEngine):
         return math.hypot(c1.x - c2.x, c1.y - c2.y)
     #--------------Acciones------------------
     
-    def aplicar_pase(self, player_id: str,target: Coord) -> None:
+    def apply_pass(self, player_id: str,target: Coord) -> None:
         """Sends ball toward indicated coordinates with a force/speed proportional to player's 'power' attribute"""
         power = self._players[player_id]["power"]
 
@@ -34,7 +34,7 @@ class MatchEngine(IMatchEngine):
 
         self._ball_pos = target
         
-    def aplicar_remate(self, player_id: str, target: Coord) -> None:
+    def apply_shot(self, player_id: str, target: Coord) -> None:
         """Propels the ball with the maximum available power towards destination"""
         power = self._players[player_id]["power"]
 
@@ -42,7 +42,7 @@ class MatchEngine(IMatchEngine):
         
         self._ball_pos = target
 
-    def aplicar_movimiento(self, player_id: str, target: Coord) -> None:
+    def apply_movement(self, player_id: str, target: Coord) -> None:
         """Shifts player's coordinates toward the target, with a movement per tick determined by their 'speed' attribute"""
         player = self._players[player_id]
         current_pos = player["position"]
@@ -62,11 +62,11 @@ class MatchEngine(IMatchEngine):
     #-------------------Consultas----------------------------
 
 
-    def pos_pelota(self) -> Coord:
+    def ball_position(self) -> Coord:
         """Returns real time ball's coordinates"""
         return self._ball_pos
 
-    def jugador_aliado_mas_cercano(self, player_id: str) -> Coord:
+    def nearest_teammate_position(self, player_id: str) -> Coord:
         """Returns player's closest ally excluding itself and non playing allies"""
         me = self._players[player_id]
         my_pos = me["position"]
@@ -87,7 +87,7 @@ class MatchEngine(IMatchEngine):
         )
         return closest_ally["position"]
 
-    def jugador_enemigo_mas_cercano(self, player_id: str) -> Coord:
+    def nearest_opponent_position(self, player_id: str) -> Coord:
         """Returns closest enemy coordinates"""
         me = self._players[player_id]
         my_pos = me["position"]
@@ -107,26 +107,26 @@ class MatchEngine(IMatchEngine):
         )
         return closest_enemy["position"]
 
-    def arco_aliado(self, player_id: str) -> Coord:
+    def own_goal_position(self, player_id: str) -> Coord:
         """Returns own goal coordinates"""
         return self._players[player_id]["own_goal"]
 
-    def arco_enemigo(self, player_id: str) -> Coord:
+    def opponent_goal_position(self, player_id: str) -> Coord:
         """Returns enemies goal coordinates"""
         return self._players[player_id]["enemy_goal"]
 
-    def pos_jugador(self, player_id: str) -> Coord:
+    def player_position(self, player_id: str) -> Coord:
         """Returns player's coordinates"""
         return self._players[player_id]["position"]
 
-    def tiene_pelota(self, player_id: str) -> bool:
+    def player_has_ball(self, player_id: str) -> bool:
         """Returns true if ball is in player's control radius"""
         if self._ball_possessor_id == player_id:
             return True
         else:
             return False
         
-    def club_tiene_pelota(self, player_id: str) -> bool:
+    def team_has_ball(self, player_id: str) -> bool:
         """Returns true if player's club is in control of the ball"""
         if self._ball_possessor_id is None:
             return False
@@ -137,11 +137,16 @@ class MatchEngine(IMatchEngine):
 
 #-------------------------Precondiciones y metadatos-----------------------
 
-    def dentro_de_cancha(self, coord:Coord) -> bool:
+    def is_inside_field(self, coord:Coord) -> bool:
         return 0.0 <= coord.x <= FIELD_WIDTH and 0.0 <= coord.y <= FIELD_HEIGHT
 
-    def jugador_en_cancha(self, player_id: str) -> bool:
+    def player_is_on_field(self, player_id: str) -> bool:
         return self._players[player_id].get("is_on_field", True)
 
-    def comportamiento_asignado(self, player_id: str) -> str:
+    def assigned_behavior(self, player_id: str) -> str:
         return self._players[player_id].get("behavior_id", "")
+
+    def register_error(self, player_id: str, message: str) -> None:
+        if player_id not in self._errors:
+            self._errors[player_id] = []
+        self._errors[player_id].append(message)
