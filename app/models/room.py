@@ -22,28 +22,28 @@ if TYPE_CHECKING:
 """Modelo de sala: LEAGUE publica, LEAGUE privada o amistoso."""
 
 # --- Tipos de sala ---
-TYPE_PUBLIC = "public"
-TYPE_PRIVATE = "private"
-TYPE_FRIENDLY = "friendly"
-TYPES_SALA = (TYPE_PUBLIC, TYPE_PRIVATE, TYPE_FRIENDLY)
+ROOM_TYPE_PUBLIC = "public"
+ROOM_TYPE_PRIVATE = "private"
+ROOM_TYPE_FRIENDLY = "friendly"
+ROOM_TYPES = (ROOM_TYPE_PUBLIC, ROOM_TYPE_PRIVATE, ROOM_TYPE_FRIENDLY)
 
 # --- Estados de sala ---
-STATE_WAITING_GUEST = "waiting_guest"
-STATE_READY_TO_START = "ready_to_start"
-STATE_IN_PROGRESS = "in_progress"
-STATE_FINISHED = "finished"
-STATE_CANCELLED = "cancelled"
-STATES_SALA = (
-    STATE_WAITING_GUEST,
-    STATE_READY_TO_START,
-    STATE_IN_PROGRESS,
-    STATE_FINISHED,
-    STATE_CANCELLED,
+ROOM_STATUS_WAITING_GUEST = "waiting_guest"
+ROOM_STATUS_READY_TO_START = "ready_to_start"
+ROOM_STATUS_IN_PROGRESS = "in_progress"
+ROOM_STATUS_FINISHED = "finished"
+ROOM_STATUS_CANCELLED = "cancelled"
+ROOM_STATUSES = (
+    ROOM_STATUS_WAITING_GUEST,
+    ROOM_STATUS_READY_TO_START,
+    ROOM_STATUS_IN_PROGRESS,
+    ROOM_STATUS_FINISHED,
+    ROOM_STATUS_CANCELLED,
 )
 
 # Limites de participantes de una liga.
-LEAGUE_CLUBS_MIN = 3
-LEAGUE_CLUBS_MAX = 30
+MIN_LEAGUE_CLUBS = 3
+MAX_LEAGUE_CLUBS = 30
 
 
 def _list_sql(valores: tuple[str, ...]) -> str:
@@ -59,30 +59,30 @@ class Room(Base):
     __tablename__ = "rooms"
     __table_args__ = (
         CheckConstraint(
-            f"type IN ({_list_sql(TYPES_SALA)})", name="ck_rooms_TYPE_valido"
+            f"type IN ({_list_sql(ROOM_TYPES)})", name="ck_rooms_type_valid"
         ),
         CheckConstraint(
-            f"status IN ({_list_sql(STATES_SALA)})", name="ck_rooms_STATE_valido"
+            f"status IN ({_list_sql(ROOM_STATUSES)})", name="ck_rooms_status_valid"
         ),
-        CheckConstraint("min_clubs <= max_clubs", name="ck_rooms_min_menor_igual_max"),
+        CheckConstraint("min_clubs <= max_clubs", name="ck_rooms_club_limits_valid"),
         CheckConstraint(
-            f"(type = '{TYPE_FRIENDLY}' AND min_clubs = 2 AND max_clubs = 2)"
-            f" OR (name IS NOT NULL AND min_clubs >= {LEAGUE_CLUBS_MIN}"
-            f" AND max_clubs <= {LEAGUE_CLUBS_MAX})",
-            name="ck_rooms_limites_por_tipo",
+            f"(type = '{ROOM_TYPE_FRIENDLY}' AND min_clubs = 2 AND max_clubs = 2)"
+            f" OR (name IS NOT NULL AND min_clubs >= {MIN_LEAGUE_CLUBS}"
+            f" AND max_clubs <= {MAX_LEAGUE_CLUBS})",
+            name="ck_rooms_club_limits_by_type",
         ),
         # Hay contrasena si y solo si la liga es privada.
         CheckConstraint(
-            f"(type = '{TYPE_PRIVATE}') = (password_hash IS NOT NULL)",
-            name="ck_rooms_password_solo_si_privada",
+            f"(type = '{ROOM_TYPE_PRIVATE}') = (password_hash IS NOT NULL)",
+            name="ck_rooms_private_password_required",
         ),
         # Nombre de liga unico.
         Index(
-            "ux_rooms_name_LEAGUEs",
+            "ux_rooms_league_name",
             "name",
             unique=True,
-            sqlite_where=text(f"type IN ('{TYPE_PUBLIC}', '{TYPE_PRIVATE}')"),
-            postgresql_where=text(f"type IN ('{TYPE_PUBLIC}', '{TYPE_PRIVATE}')"),
+            sqlite_where=text(f"type IN ('{ROOM_TYPE_PUBLIC}', '{ROOM_TYPE_PRIVATE}')"),
+            postgresql_where=text(f"type IN ('{ROOM_TYPE_PUBLIC}', '{ROOM_TYPE_PRIVATE}')"),
         ),
         # Cubre los dos listados: ligas publicas abiertas y amistosos esperando rival. REVISAR ESTO!!!!!!!!!!!!!!!!!
         Index("ix_rooms_type_status", "type", "status"),
@@ -114,7 +114,7 @@ class Room(Base):
     match_duration_minutes: Mapped[int] = mapped_column(SmallInteger, nullable=False)
 
     status: Mapped[str] = mapped_column(
-        String(15), nullable=False, default=STATE_WAITING_GUEST
+        String(15), nullable=False, default=ROOM_STATUS_WAITING_GUEST
     )
 
     created_at: Mapped[datetime] = mapped_column(

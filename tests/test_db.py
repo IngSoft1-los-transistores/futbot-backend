@@ -7,7 +7,7 @@ from app.db.init_db import cargar_comportamientos_por_defecto
 from app.models.behavior import Behavior
 from app.models.club import Club
 from app.models.player import Player
-from tests.test_conf import crear_player
+from tests.conftest import crear_player
 
 """Tests del schema: tablas, restricciones de integridad y carga inicial."""
 
@@ -97,7 +97,7 @@ def test_la_carga_inicial_deja_los_tres_comportamientos(db: Session) -> None:
     nombres = set(
         db.scalars(select(Behavior.name).where(Behavior.club_id.is_(None))).all()
     )
-    assert nombres == {"correr", "encontrar_pelota", "patear_pelota"}
+    assert nombres == {"front", "defense", "goalkeeper"}
 
     # Todos quedan marcados como preprogramados, con su codigo cargado.
     for comportamiento in db.scalars(select(Behavior)).all():
