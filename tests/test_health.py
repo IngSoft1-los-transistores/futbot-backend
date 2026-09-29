@@ -11,7 +11,7 @@ def test_health_responde_ok_con_la_base_conectada(client: TestClient) -> None:
     respuesta = client.get("/api/health")
 
     assert respuesta.status_code == 200
-    assert respuesta.json() == {"status": "ok", "database_connected": True}
+    assert respuesta.json() == {"status": "ok", "databaseConnected": True}
 
 
 def test_health_no_requiere_autenticacion(client: TestClient) -> None:
