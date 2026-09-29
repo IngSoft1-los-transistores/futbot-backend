@@ -30,3 +30,6 @@ coverage.xml
 # Sistema operativo
 .DS_Store
 Thumbs.db
+
+#carpeta interna del grupo
+docus_personal/
