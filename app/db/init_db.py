@@ -4,7 +4,7 @@ from pathlib import Path
 
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
-# Importar `app.models` registra las diez tablas en `Base.metadata`. Sin este
+# Importar `app.models` registra las tablas en `Base.metadata`. Sin este
 # import, `create_all()` no tendria nada que crear.
 """Creacion del schema y carga de los comportamientos preprogramados."""
 

@@ -33,19 +33,23 @@ def test_login_success(client: TestClient, login_user: User) -> None:
     finished_at = int(datetime.now(timezone.utc).timestamp())
     assert response.status_code == 200
     body = response.json()
-    assert set(body) == {"accessToken", "tokenType", "clubId"}
-    assert body["tokenType"] == "bearer"
-    assert body["clubId"] == login_user.club.id  # assert body["clubId"] == str(login_user.club.id)
+    assert set(body) == {"access_token", "refresh_token", "token_type", "club_id", "expires_at"}
+    assert body["token_type"] == "bearer"
+    assert response.headers["cache-control"] == "no-store"
+    assert client.get('/api/auth/me', headers={'Authorization': f'Bearer {body["access_token"]}'}).status_code == 200
+    assert client.post('/api/auth/refresh', json={'refresh_token': body['refresh_token']}).status_code == 401
+    assert body["club_id"] == login_user.club.id  # assert body["club_id"] == str(login_user.club.id)
     claims = jwt.decode(
-        body["accessToken"], settings.jwt_secret_key,
+        body["access_token"], settings.jwt_secret_key,
         algorithms=[settings.jwt_algorithm],
     )
     assert claims["sub"] == login_user.id #str(login_user.id)
+    assert body["expires_at"] == claims["exp"]
     lifetime = settings.jwt_expire_minutes * 60
     assert started_at + lifetime <= claims["exp"] <= finished_at + lifetime
-    assert set(claims) == {"sub", "exp"}
+    assert set(claims) == {"sub", "sid", "exp"}
     with pytest.raises(JWTError):
-        jwt.decode(body["accessToken"], "wrong-key", algorithms=[settings.jwt_algorithm])
+        jwt.decode(body["access_token"], "wrong-key", algorithms=[settings.jwt_algorithm])
 
 
 @pytest.mark.parametrize("email,password", [

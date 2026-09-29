@@ -11,6 +11,17 @@ class LoginRequest(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    accessToken: str
-    tokenType: Literal["bearer"] = "bearer"
-    clubId: UUID
+    expires_at: int
+    access_token: str
+    refresh_token: str
+    token_type: Literal["bearer"] = "bearer"
+    club_id: UUID
+
+
+class CurrentUserResponse(BaseModel):
+    user_id: UUID
+    club_id: UUID
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: SecretStr

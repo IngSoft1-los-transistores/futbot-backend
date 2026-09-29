@@ -13,6 +13,7 @@ from tests.test_conf import crear_player
 
 TABLAS_ESPERADAS = {
     "users",
+    "auth_sessions",
     "clubs",
     "players",
     "behaviors",
@@ -25,7 +26,7 @@ TABLAS_ESPERADAS = {
 }
 
 
-def test_se_crean_las_diez_tablas_del_sprint(engine: Engine) -> None:
+def test_se_crean_las_tablas_esperadas(engine: Engine) -> None:
     """El schema generado tiene exactamente las tablas esperadas.
     """
     assert set(inspect(engine).get_table_names()) == TABLAS_ESPERADAS
