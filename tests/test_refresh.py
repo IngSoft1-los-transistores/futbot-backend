@@ -10,10 +10,7 @@ from app.models.auth_session import AuthSession
 from app.services.auth import start_session
 
 
-@pytest.fixture(autouse=True)
-def enable_optional_refresh(monkeypatch):
-    # La renovación queda disponible en backend, desactivada por defecto.
-    monkeypatch.setattr(get_settings(), 'refresh_enabled', True)
+pytestmark = pytest.mark.usefixtures("enable_optional_refresh")
 
 
 def bearer(tokens):

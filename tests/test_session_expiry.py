@@ -1,14 +1,10 @@
 from time import time
-from app.core.config import get_settings
 from app.core.security import decode_access_token
 from app.models.auth_session import AuthSession
 from app.services.auth import start_session
 
 
-def test_fixed_session_expires_without_refresh(client, db, club, monkeypatch):
-    settings = get_settings()
-    monkeypatch.setattr(settings, 'refresh_enabled', False)
-    monkeypatch.setattr(settings, 'jwt_expire_minutes', 5)
+def test_fixed_session_expires_without_refresh(client, db, club, monkeypatch, fixed_session_settings):
     started = int(time())
     tokens = start_session(db, club.user)
     claims = decode_access_token(tokens.access_token)

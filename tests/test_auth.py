@@ -6,21 +6,7 @@ from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.core.security import password_context
-from app.models.club import Club
 from app.models.user import User
-
-
-@pytest.fixture
-def login_user(db: Session) -> User:
-    user = User(
-        username="login-tester", email="login@futbot.test",
-        password_hash=password_context.hash("correct-password"),
-    )
-    user.club = Club(name="Login Club")
-    db.add(user)
-    db.commit()
-    return user
 
 
 def test_login_success(client: TestClient, login_user: User) -> None:
