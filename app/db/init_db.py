@@ -4,7 +4,7 @@ from pathlib import Path
 
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
-# Importar `app.models` registra las diez tablas en `Base.metadata`. Sin este
+# Importar `app.models` registra las tablas en `Base.metadata`. Sin este
 # import, `create_all()` no tendria nada que crear.
 from app.models.behavior import Behavior
 
@@ -29,6 +29,8 @@ def crear_tablas(engine: Engine) -> None:
 def _leer_comportamiento(archivo: Path) -> tuple[str, str]:
     """Extrae el nombre y el codigo de un archivo de comportamiento default."""
     codigo = archivo.read_text(encoding="utf-8")
+    if not codigo.strip():
+        raise ValueError(f"El comportamiento {archivo.name} tiene codigo vacio")
     ast.parse(codigo)
     return archivo.stem, codigo
 
