@@ -13,7 +13,7 @@ from app.behaviors.loader import precargar_preprogramados
 from app.core.config import settings
 from app.db.init_db import cargar_comportamientos_por_defecto, crear_tablas
 from app.db.session import SessionLocal, engine
-from app.routers import auth, health
+from app.routers import health, auth
 
 logger = logging.getLogger(__name__)
 
