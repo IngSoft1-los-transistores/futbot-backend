@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 """Configuracion de la aplicacion, leida desde el archivo .env."""
@@ -11,10 +12,15 @@ class Settings(BaseSettings):
     #auth
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
-    jwt_expire_minutes: int = 1440
+    jwt_expire_minutes: int = Field(default=1440, gt=0)
+    refresh_enabled: bool = False
+    refresh_expire_days: int = Field(default=7, gt=0)
     
     #CORS
-    cors_origins_list: list[str] = ["http://localhost:5173"]
+    cors_origins_list: list[str] = Field(
+        default=["http://localhost:5173"],
+        validation_alias=AliasChoices("CORS_ORIGINS", "CORS_ORIGINS_LIST"),
+    )
     
      # --- Simulacion de partidos ---
     match_tick_rate: int = 15
@@ -27,7 +33,7 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
-
+    
 
 settings = Settings()
 @lru_cache

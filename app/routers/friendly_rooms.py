@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_current_club
+from app.core.dependencies import get_current_club
 from app.db.session import get_db
 from app.models.club import Club
-from app.models.room import STATE_IN_PROGRESS
+from app.models.room import ROOM_STATUS_IN_PROGRESS
 from app.schemas.friendly_room import FriendlyRoomRead, FriendlyRoomStartRead
 from app.services.friendly_rooms import get_friendly_room, start_friendly_match
 
@@ -30,5 +30,5 @@ def start_friendly_room(
 ) -> FriendlyRoomStartRead:
     match = start_friendly_match(db, room_id, club)
     return FriendlyRoomStartRead(
-        room_id=room_id, match_id=match.id, status=STATE_IN_PROGRESS
+        room_id=room_id, match_id=match.id, status=ROOM_STATUS_IN_PROGRESS
     )

@@ -1,27 +1,21 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, status
+import logging
+
+from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.behaviors.loader import precargar_preprogramados
 from app.core.config import settings
 from app.db.init_db import cargar_comportamientos_por_defecto, crear_tablas
 from app.db.session import SessionLocal, engine
-from app.routers import friendly_rooms, health
+from app.routers import auth, friendly_rooms, health
 
-# Used when an HTTPException has no explicit error_code.
-DEFAULT_ERROR_CODES = {
-    status.HTTP_400_BAD_REQUEST: "BAD_REQUEST",
-    status.HTTP_401_UNAUTHORIZED: "UNAUTHORIZED",
-    status.HTTP_403_FORBIDDEN: "FORBIDDEN",
-    status.HTTP_404_NOT_FOUND: "NOT_FOUND",
-    status.HTTP_405_METHOD_NOT_ALLOWED: "METHOD_NOT_ALLOWED",
-    status.HTTP_409_CONFLICT: "CONFLICT",
-    status.HTTP_422_UNPROCESSABLE_ENTITY: "VALIDATION_ERROR",
-    status.HTTP_503_SERVICE_UNAVAILABLE: "SERVICE_UNAVAILABLE",
-}
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -32,6 +26,7 @@ async def lifespan(app: FastAPI):
     db = SessionLocal()
     try:
         cargar_comportamientos_por_defecto(db)
+        precargar_preprogramados(db)
     finally:
         db.close()
 
@@ -39,6 +34,55 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="FutBot API", lifespan=lifespan)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def handle_http_error(request: Request, error: StarletteHTTPException) -> JSONResponse:
+    error_codes = {
+        400: "BAD_REQUEST",
+        401: "UNAUTHORIZED",
+        403: "FORBIDDEN",
+        404: "NOT_FOUND",
+        409: "CONFLICT",
+        422: "VALIDATION_ERROR",
+        503: "SERVICE_UNAVAILABLE",
+    }
+    # Services may choose the code: detail={"detail": ..., "error_code": ...}.
+    if isinstance(error.detail, dict) and "error_code" in error.detail:
+        content = error.detail
+    else:
+        content = {
+            "detail": jsonable_encoder(error.detail),
+            "error_code": error_codes.get(error.status_code, "HTTP_ERROR"),
+        }
+    return JSONResponse(
+        status_code=error.status_code, content=content, headers=error.headers
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def handle_validation_error(
+    request: Request, error: RequestValidationError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": jsonable_encoder(error.errors()),
+            "error_code": "VALIDATION_ERROR",
+        },
+    )
+
+
+@app.exception_handler(Exception)
+async def handle_unexpected_error(request: Request, error: Exception) -> JSONResponse:
+    logger.exception("Unhandled application error")
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "Internal server error",
+            "error_code": "INTERNAL_SERVER_ERROR",
+        },
+    )
 
 app.add_middleware(
     CORSMiddleware,
@@ -48,35 +92,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.exception_handler(StarletteHTTPException)
-async def http_exception_handler(
-    request: Request, exc: StarletteHTTPException
-) -> JSONResponse:
-    if isinstance(exc.detail, dict) and "error_code" in exc.detail:
-        content = exc.detail
-    else:
-        content = {
-            "detail": str(exc.detail),
-            "error_code": DEFAULT_ERROR_CODES.get(exc.status_code, "HTTP_ERROR"),
-        }
-    return JSONResponse(
-        status_code=exc.status_code, content=content, headers=exc.headers
-    )
-
-
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(
-    request: Request, exc: RequestValidationError
-) -> JSONResponse:
-    messages = "; ".join(
-        f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
-        for error in exc.errors()
-    )
-    return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": messages, "error_code": "VALIDATION_ERROR"},
-    )
-
-
 app.include_router(health.router)
+app.include_router(auth.router)
 app.include_router(friendly_rooms.router)

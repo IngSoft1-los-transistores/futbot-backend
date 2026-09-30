@@ -1,3 +1,4 @@
+from app.models.auth_session import AuthSession
 from app.models.behavior import Behavior
 from app.models.club import Club
 from app.models.enrollment import Enrollment
@@ -10,6 +11,6 @@ from app.models.squad_entry import SquadEntry
 from app.models.user import User
 
 __all__ = [
-    "Behavior", "Club", "Enrollment", "Goal", "Match",
+    "AuthSession", "Behavior", "Club", "Enrollment", "Goal", "Match",
     "MatchPlayer", "Player", "Room", "SquadEntry", "User",
 ]

@@ -18,17 +18,17 @@ from app.models.match import (
 from app.models.match_player import MatchPlayer
 from app.models.player import Player
 from app.models.room import (
-    STATE_FINISHED,
-    STATE_IN_PROGRESS,
-    STATE_READY_TO_START,
-    TYPE_FRIENDLY,
+    ROOM_STATUS_FINISHED,
+    ROOM_STATUS_IN_PROGRESS,
+    ROOM_STATUS_READY_TO_START,
+    ROOM_TYPE_FRIENDLY,
     Room,
 )
 from app.models.squad_entry import (
-    CANTIDAD_STARTERS as STARTERS_COUNT,
-    CANTIDAD_SUBSTITUTES as SUBSTITUTES_COUNT,
-    ROL_STARTER as ROLE_STARTER,
-    ROL_SUBSTITUTE as ROLE_SUBSTITUTE,
+    ROLE_STARTER,
+    ROLE_SUBSTITUTE,
+    STARTER_COUNT,
+    SUBSTITUTE_COUNT,
     SquadEntry,
 )
 from app.schemas.friendly_room import (
@@ -40,7 +40,7 @@ from app.schemas.friendly_room import (
 """Business logic for friendly rooms."""
 
 FRIENDLY_CLUBS = 2
-STARTED_ROOM_STATES = (STATE_IN_PROGRESS, STATE_FINISHED)
+STARTED_ROOM_STATES = (ROOM_STATUS_IN_PROGRESS, ROOM_STATUS_FINISHED)
 ACTIVE_MATCH_STATES = (MATCH_PRE_MATCH, MATCH_IN_PROGRESS, MATCH_PAUSED)
 
 
@@ -85,7 +85,7 @@ def _validate_squads(
             raise _invalid_squad()
         roles_per_club[player.club_id][entry.role] += 1
 
-    expected = Counter({ROLE_STARTER: STARTERS_COUNT, ROLE_SUBSTITUTE: SUBSTITUTES_COUNT})
+    expected = Counter({ROLE_STARTER: STARTER_COUNT, ROLE_SUBSTITUTE: SUBSTITUTE_COUNT})
     if any(roles != expected for roles in roles_per_club.values()):
         raise _invalid_squad()
 
@@ -97,7 +97,7 @@ def _start_simulation(match_id: str) -> None:
 def _get_room_for_member(db: Session, room_id: str, club: Club) -> tuple[Room, set[str]]:
     """Returns the friendly room and its club ids, or 404/403."""
     room = db.get(Room, room_id)
-    if room is None or room.type != TYPE_FRIENDLY:
+    if room is None or room.type != ROOM_TYPE_FRIENDLY:
         raise _error(
             status.HTTP_404_NOT_FOUND, "ROOM_NOT_FOUND", "La sala amistosa no existe"
         )
@@ -174,7 +174,7 @@ def start_friendly_match(db: Session, room_id: str, club: Club) -> Match:
             "La sala todavía no tiene club local y visitante",
         )
 
-    if room.status != STATE_READY_TO_START:
+    if room.status != ROOM_STATUS_READY_TO_START:
         raise _error(
             status.HTTP_400_BAD_REQUEST,
             "ROOM_NOT_READY",
@@ -191,8 +191,8 @@ def start_friendly_match(db: Session, room_id: str, club: Club) -> Match:
     # Conditional update: if both clubs start at once, only one request wins.
     result = db.execute(
         update(Room)
-        .where(Room.id == room.id, Room.status == STATE_READY_TO_START)
-        .values(status=STATE_IN_PROGRESS, started_at=now)
+        .where(Room.id == room.id, Room.status == ROOM_STATUS_READY_TO_START)
+        .values(status=ROOM_STATUS_IN_PROGRESS, started_at=now)
     )
     if result.rowcount != 1:
         db.rollback()

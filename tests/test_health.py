@@ -11,7 +11,7 @@ def test_health_responde_ok_con_la_base_conectada(client: TestClient) -> None:
     respuesta = client.get("/api/health")
 
     assert respuesta.status_code == 200
-    assert respuesta.json() == {"status": "ok", "database_connected": True}
+    assert respuesta.json() == {"status": "ok", "databaseConnected": True}
 
 
 def test_health_no_requiere_autenticacion(client: TestClient) -> None:
@@ -57,3 +57,18 @@ def test_los_errores_usan_el_formato_unico_del_contrato(client: TestClient) -> N
     assert isinstance(cuerpo["detail"], str)
 
     assert "errorCode" not in cuerpo
+
+
+def test_error_de_autenticacion_conserva_cabecera_bearer(client: TestClient) -> None:
+    respuesta = client.get("/api/auth/me")
+    assert respuesta.status_code == 401
+    assert respuesta.json()["error_code"] == "UNAUTHORIZED"
+    assert respuesta.headers["www-authenticate"] == "Bearer"
+
+
+def test_error_de_validacion_conserva_detalle_de_campos(client: TestClient) -> None:
+    respuesta = client.post("/api/auth/login", json={})
+    assert respuesta.status_code == 422
+    cuerpo = respuesta.json()
+    assert cuerpo["error_code"] == "VALIDATION_ERROR"
+    assert {error["loc"][-1] for error in cuerpo["detail"]} == {"email", "password"}
