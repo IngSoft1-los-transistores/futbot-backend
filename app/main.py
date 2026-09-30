@@ -51,7 +51,7 @@ async def handle_http_error(request: Request, error: StarletteHTTPException) -> 
         status_code=error.status_code,
         content={
             "detail": jsonable_encoder(error.detail),
-            "errorCode": error_codes.get(error.status_code, "HTTP_ERROR"),
+            "error_code": error_codes.get(error.status_code, "HTTP_ERROR"),
         },
         headers=error.headers,
     )
@@ -65,7 +65,7 @@ async def handle_validation_error(
         status_code=422,
         content={
             "detail": jsonable_encoder(error.errors()),
-            "errorCode": "VALIDATION_ERROR",
+            "error_code": "VALIDATION_ERROR",
         },
     )
 
@@ -77,7 +77,7 @@ async def handle_unexpected_error(request: Request, error: Exception) -> JSONRes
         status_code=500,
         content={
             "detail": "Internal server error",
-            "errorCode": "INTERNAL_SERVER_ERROR",
+            "error_code": "INTERNAL_SERVER_ERROR",
         },
     )
 

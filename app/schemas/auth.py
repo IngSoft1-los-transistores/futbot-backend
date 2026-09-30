@@ -1,5 +1,8 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
+from typing import Literal
+from uuid import UUID
+
+from pydantic import BaseModel, SecretStr
 
 """ Esquemas de autenticación y registro de usuarios."""
 
@@ -34,3 +37,26 @@ class UserRead(BaseModel):
     club: ClubRead
 
     model_config = {"from_attributes": True}
+
+"""Entrada y salida del inicio de sesion segun el contrato."""
+
+class LoginRequest(BaseModel):
+    email: str
+    password: SecretStr
+
+
+class LoginResponse(BaseModel):
+    expires_at: int
+    access_token: str
+    refresh_token: str
+    token_type: Literal["bearer"] = "bearer"
+    club_id: UUID
+
+
+class CurrentUserResponse(BaseModel):
+    user_id: UUID
+    club_id: UUID
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: SecretStr
