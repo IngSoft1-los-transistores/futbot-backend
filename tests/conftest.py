@@ -23,8 +23,7 @@ from app.models.user import User
 
 @pytest.fixture
 def engine(tmp_path) -> Generator[Engine, None, None]:
-    """Engine contra una base SQLite temporal, propia de cada test.
-    """
+    """Engine contra una base SQLite temporal, propia de cada test."""
     engine = _crear_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
     yield engine
@@ -44,8 +43,7 @@ def db(engine: Engine) -> Generator[Session, None, None]:
 
 @pytest.fixture
 def client(db: Session) -> Generator[TestClient, None, None]:
-    """Cliente HTTP con la dependencia de base de datos redirigida al test.
-    """
+    """Cliente HTTP con la dependencia de base de datos redirigida al test."""
     app.dependency_overrides[get_db] = lambda: db
     try:
         yield TestClient(app)
@@ -54,30 +52,11 @@ def client(db: Session) -> Generator[TestClient, None, None]:
 
 
 # --- Helpers de creacion de datos ---
-
-
-@pytest.fixture
-def club(db: Session) -> Club:
-    """Crea un usuario con su club y los deja persistidos."""
-    usuario = User(
-        username="tester",
-        email="tester@futbot.test",
-        password_hash="hash-de-prueba",
-    )
-    db.add(usuario)
-    db.flush()
-
-    club = Club(user_id=usuario.id, name="Club de Prueba")
-    db.add(club)
-    db.commit()
-
-    return club
-
-
 @pytest.fixture
 def login_user(db: Session) -> User:
     user = User(
-        username="login-tester", email="login@futbot.test",
+        username="login-tester",
+        email="login@futbot.test",
         password_hash=password_context.hash("correct-password"),
     )
     user.club = Club(name="Login Club")
@@ -89,8 +68,8 @@ def login_user(db: Session) -> User:
 @pytest.fixture
 def crear_player(db: Session):
     """Fabrica de jugadores usando la base aislada de cada prueba."""
+
     def crear(club_id: str, **overrides) -> Player:
-        """Crea un jugador con PACSS validos (60 en cada atributo suma 300)."""
         atributos = {
             "power": 60,
             "agility": 60,
@@ -99,11 +78,9 @@ def crear_player(db: Session):
             "strength": 60,
         }
         atributos.update(overrides)
-
         player = Player(club_id=club_id, name="Jugador de Prueba", **atributos)
         db.add(player)
         db.commit()
-
         return player
 
     return crear
@@ -111,13 +88,27 @@ def crear_player(db: Session):
 
 @pytest.fixture
 def enable_optional_refresh(monkeypatch):
-    """Habilita la renovacion solo en las pruebas que la solicitan."""
     monkeypatch.setattr(get_settings(), "refresh_enabled", True)
 
 
 @pytest.fixture
 def fixed_session_settings(monkeypatch):
-    """Configura sesiones de cinco minutos sin renovacion."""
     settings = get_settings()
     monkeypatch.setattr(settings, "refresh_enabled", False)
     monkeypatch.setattr(settings, "jwt_expire_minutes", 5)
+
+
+@pytest.fixture
+def user(db: Session) -> User:
+    usuario = User(
+        username="tester", email="tester@futbot.test", password_hash="hash-de-prueba"
+    )
+    usuario.club = Club(name="Club de Prueba")
+    db.add(usuario)
+    db.commit()
+    return usuario
+
+
+@pytest.fixture
+def club(user: User) -> Club:
+    return user.club
