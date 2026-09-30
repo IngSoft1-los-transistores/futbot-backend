@@ -1,150 +1,254 @@
 import math
-from typing import Dict, Optional
+from dataclasses import dataclass
+from typing import Dict, Optional, List
 
-from app.behaviors.interfaces import IMatchEngine
 from app.schemas.coord import Coord
 
-# Field dimensions
-# Placeholder for testing purposes
+# Dimensiones oficiales del campo (Centrado en (0,0))
 FIELD_WIDTH = 100.0
 FIELD_HEIGHT = 60.0
+HALF_WIDTH = FIELD_WIDTH / 2.0 # 50.0
+HALF_HEIGHT = FIELD_HEIGHT / 2.0 # 30.0
+
+# Constantes para mapeo de PACSS (20 a 100)
+PACSS_MINIMO = 20
+PACSS_MAXIMO = 100
+
+PLAYER_MIN_SPEED = 4.0 # unidades por segundo a speed=20
+PLAYER_MAX_SPEED = 9.0 # unidades por segundo a speed=100
+
+BALL_MIN_POWER = 10.0 # unidades por segundo a power=20
+BALL_MAX_POWER = 25.0 # unidades por segundo a power=100
+
+TICKS_PER_SECOND = 15.0 # Frecuencia simulada
+
+@dataclass(slots=True)
+class PlayerState:
+    club_id: str
+    position: Coord
+    own_goal: Coord
+    enemy_goal: Coord
+    speed: int
+    power: int
+    control: int
+    is_on_field: bool
+    behavior_id: str
 
 
-class MatchEngine(IMatchEngine):
+class MatchEngine:
     """
-    Modulo de resolución de primitivas.
-    Cumple con la interfaz IMatchEngine requerida por el modulo de comportamientos
+    Modulo de simulacion en memoria para resolucion de primitivas.
     """
-    def __init__(self, players_data: Dict, ball_pos: Coord):
+    def __init__(self, players_data: Dict[str, PlayerState], ball_pos: Coord):
         self._players = players_data
         self._ball_pos = ball_pos
         self._ball_possessor_id: Optional[str] = None
-        self._errors: Dict[str, list] = {}
+        self._errors: Dict[str, List[str]] = {}
+        self._update_possession_state()
 
+    
     def _distance(self, c1:Coord, c2:Coord) -> float:
         """Funcion auxiliar para calcular distancia euclidiana"""
         return math.hypot(c1.x - c2.x, c1.y - c2.y)
+
+    
+    def _max_step_speed(self, speed_stat: int) -> float:
+        """
+        Convierte la nota de speed (20-100) a distancia maxima alcanzable en 1 tick.
+        """
+        clamped_speed = max(PACSS_MINIMO, min(PACSS_MAXIMO, speed_stat))
+        ratio = (clamped_speed - PACSS_MINIMO) / (PACSS_MAXIMO - PACSS_MINIMO)
+        per_second = PLAYER_MIN_SPEED + ratio * (PLAYER_MAX_SPEED - PLAYER_MIN_SPEED)
+        return per_second / TICKS_PER_SECOND
+
+    
+    def _max_step_power(self, power_stat: int, pass_ratio: float = 1.0) -> float:
+        """
+        Convierte la nota de power (20-100) a la velocidad/desplazamiento del balon en 1 tick.
+        """
+        clamped_power = max(PACSS_MINIMO, min(PACSS_MAXIMO, power_stat))
+        ratio = (clamped_power - PACSS_MINIMO) / (PACSS_MAXIMO - PACSS_MINIMO)
+        per_second = BALL_MIN_POWER + ratio * (BALL_MAX_POWER - BALL_MIN_POWER)
+        return (per_second * pass_ratio) / TICKS_PER_SECOND
+
+    
+    def _update_possession_state(self) -> None:
+        """
+        Asigna la posesion al jugador mas cercano dentro de su radio de control.
+        """
+        for p_id, player in self._players.items():
+            if player.is_on_field:
+                # El atributo control (20-100) se traduce a un radio de control
+                control_radius = 1.0 + ((player.control - PACSS_MINIMO) / (PACSS_MAXIMO - PACSS_MINIMO)) * 2.0
+                if self._distance(player.position, self._ball_pos) <= control_radius:
+                    self._ball_possessor_id = p_id
+                    return
+        self._ball_possessor_id = None
+
+
+
     #--------------Acciones------------------
     
     def apply_pass(self, player_id: str,target: Coord) -> None:
-        """Sends ball toward indicated coordinates with a force/speed proportional to player's 'power' attribute"""
-        power = self._players[player_id]["power"]
+        if not self.is_inside_field(target):
+            self.register_error(player_id, "Coordenada fuera de limites de pase")
+            return
 
-        self._ball_possessor_id = None
-
-        self._ball_pos = target
-        
-    def apply_shot(self, player_id: str, target: Coord) -> None:
-        """Propels the ball with the maximum available power towards destination"""
-        power = self._players[player_id]["power"]
-
-        self._ball_possessor_id = None
-        
-        self._ball_pos = target
-
-    def apply_movement(self, player_id: str, target: Coord) -> None:
-        """Shifts player's coordinates toward the target, with a movement per tick determined by their 'speed' attribute"""
         player = self._players[player_id]
-        current_pos = player["position"]
-        max_speed = player["speed"]
+        max_ball_step = self._max_step_power(player.power, pass_ratio=0.7) # pase proporcional 70%
 
-        distance = self._distance(current_pos, target)
-
-        if distance > max_speed and distance > 0:
-            ratio = max_speed / distance
-            new_x = current_pos.x + (target.x - current_pos.x) * ratio
-            new_y = current_pos.y + (target.y - current_pos.y) * ratio
-            player["position"] = Coord(x=new_x, y=new_y)
+        dist = self._distance(self._ball_pos, target)
+        if dist > max_ball_step and dist > 0:
+            ratio = max_ball_step / dist
+            new_x = self._ball_pos.x + (target.x - self._ball_pos.x) * ratio
+            new_y = self._ball_pos.y + (target.y - self._ball_pos.y) * ratio
+            self._ball_pos = Coord(x=new_x, y=new_y)
         else:
-            player["position"] = target
+            self._ball_pos = target
+
+        self._ball_possessor_id = None
+        self._update_possession_state()
+
+    
+    def apply_shot(self, player_id: str, target: Coord) -> None:
+        if not self.is_inside_field(target):
+            self.register_error(player_id, "Coordenada fuera de límites para tiro")
+            return
+
+        player = self._players[player_id]
+        max_ball_step = self._max_step_power(player.power, pass_ratio=1.0)  # Máxima potencia
+
+        dist = self._distance(self._ball_pos, target)
+        if dist > max_ball_step and dist > 0:
+            ratio = max_ball_step / dist
+            new_x = self._ball_pos.x + (target.x - self._ball_pos.x) * ratio
+            new_y = self._ball_pos.y + (target.y - self._ball_pos.y) * ratio
+            self._ball_pos = Coord(x=new_x, y=new_y)
+        else:
+            self._ball_pos = target
+
+        self._ball_possessor_id = None
+        self._update_possession_state()
+
+    
+    def apply_movement(self, player_id: str, target: Coord) -> None:
+        if not self.is_inside_field(target):
+            self.register_error(player_id, "Coordenada fuera de límites para movimiento")
+            return
+
+        player = self._players[player_id]
+        max_step = self._max_step_speed(player.speed)
+        dist = self._distance(player.position, target)
+
+        if dist > max_step and dist > 0:
+            ratio = max_step / dist
+            new_x = player.position.x + (target.x - player.position.x) * ratio
+            new_y = player.position.y + (target.y - player.position.y) * ratio
+            player.position = Coord(x=new_x, y=new_y)
+        else:
+            player.position = target
+
+        self._update_possession_state()
 
 
     #-------------------Consultas----------------------------
 
 
     def ball_position(self) -> Coord:
-        """Returns real time ball's coordinates"""
+        """
+        Devuelve coordenadas en tiempo real de la pelota.
+        """
         return self._ball_pos
 
+    
     def nearest_teammate_position(self, player_id: str) -> Coord:
-        """Returns player's closest ally excluding itself and non playing allies"""
+        """
+        Devuelve coordenadas de aliado mas cercano al jugador excluyendose a si mismo.
+        """
         me = self._players[player_id]
-        my_pos = me["position"]
 
         allies = [
             p for p_id, p in self._players.items()
             if p_id != player_id
-            and p["club_id"] == me["club_id"]
-            and p.get("is_on_field", True)
+            and p.club_id == me.club_id
+            and p.is_on_field
         ]
-
         if not allies:
-            return my_pos
+            return me.position
 
-        closest_ally = min(
-            allies,
-            key=lambda p: self._distance(my_pos, p["position"])
+        closest_ally = min(allies, key=lambda p: self._distance(me.position, p.position)
         )
-        return closest_ally["position"]
+        return closest_ally.position
 
+    
     def nearest_opponent_position(self, player_id: str) -> Coord:
-        """Returns closest enemy coordinates"""
+        """
+        Devuelve coordenadas de enemigo mas cercano al jugador.
+        """
         me = self._players[player_id]
-        my_pos = me["position"]
-
+    
         enemies = [
             p for p in self._players.values()
-            if p["club_id"] != me["club_id"]
-            and p.get("is_on_field", True)
+            if p.club_id != me.club_id
+            and p.is_on_field
         ]
-
         if not enemies:
-            return my_pos
+            return me.position
 
-        closest_enemy = min(
-            enemies,
-            key=lambda p: self._distance(my_pos, p["position"])
+        closest_enemy = min(enemies, key=lambda p: self._distance(me.position, p.position)
         )
-        return closest_enemy["position"]
+        return closest_enemy.position
 
     def own_goal_position(self, player_id: str) -> Coord:
-        """Returns own goal coordinates"""
-        return self._players[player_id]["own_goal"]
-
+        """
+        Devuelve coordenadas de arco aliado.
+        """
+        return self._players[player_id].own_goal
+    
+    
     def opponent_goal_position(self, player_id: str) -> Coord:
-        """Returns enemies goal coordinates"""
-        return self._players[player_id]["enemy_goal"]
+        """
+        Devuelve coordenadas de arco enemigo.
+        """
+        return self._players[player_id].enemy_goal
 
+    
     def player_position(self, player_id: str) -> Coord:
-        """Returns player's coordinates"""
-        return self._players[player_id]["position"]
+        """
+        Devuelve coordenadas del jugador.
+        """
+        return self._players[player_id].position
+    
 
     def player_has_ball(self, player_id: str) -> bool:
-        """Returns true if ball is in player's control radius"""
-        if self._ball_possessor_id == player_id:
-            return True
-        else:
-            return False
+        """
+        Devuelve True si el jugador es poseedor de la pelota.
+        """
+        return self._ball_possessor_id == player_id
+    
         
     def team_has_ball(self, player_id: str) -> bool:
-        """Returns true if player's club is in control of the ball"""
+        """
+        Devuelve True si equipo del jugador posee la pelota.
+        """
         if self._ball_possessor_id is None:
             return False
 
-        my_club = self._players[player_id]["club_id"]
-        possessor_club = self._players[self._ball_possessor_id]["club_id"]
+        my_club = self._players[player_id].club_id
+        possessor_club = self._players[self._ball_possessor_id].club_id
         return my_club == possessor_club
 
 #-------------------------Precondiciones y metadatos-----------------------
 
     def is_inside_field(self, coord:Coord) -> bool:
-        return 0.0 <= coord.x <= FIELD_WIDTH and 0.0 <= coord.y <= FIELD_HEIGHT
+        return -HALF_WIDTH <= coord.x <= HALF_WIDTH and -HALF_HEIGHT <= coord.y <= HALF_HEIGHT
+
 
     def player_is_on_field(self, player_id: str) -> bool:
-        return self._players[player_id].get("is_on_field", True)
+        return self._players[player_id].is_on_field
 
     def assigned_behavior(self, player_id: str) -> str:
-        return self._players[player_id].get("behavior_id", "")
+        return self._players[player_id].behavior_id
 
     def register_error(self, player_id: str, message: str) -> None:
         if player_id not in self._errors:
