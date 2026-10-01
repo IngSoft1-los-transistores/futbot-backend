@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from typing import Dict, Optional, List
 
 from app.schemas.coord import Coord
+from app.core.config import settings
+from app.models.player import PACSS_MAXIMO, PACSS_MINIMO
 
 # Dimensiones oficiales del campo (Centrado en (0,0))
 FIELD_WIDTH = 100.0
@@ -10,17 +12,12 @@ FIELD_HEIGHT = 60.0
 HALF_WIDTH = FIELD_WIDTH / 2.0 # 50.0
 HALF_HEIGHT = FIELD_HEIGHT / 2.0 # 30.0
 
-# Constantes para mapeo de PACSS (20 a 100)
-PACSS_MINIMO = 20
-PACSS_MAXIMO = 100
-
 PLAYER_MIN_SPEED = 4.0 # unidades por segundo a speed=20
 PLAYER_MAX_SPEED = 9.0 # unidades por segundo a speed=100
 
 BALL_MIN_POWER = 10.0 # unidades por segundo a power=20
 BALL_MAX_POWER = 25.0 # unidades por segundo a power=100
 
-TICKS_PER_SECOND = 15.0 # Frecuencia simulada
 
 @dataclass(slots=True)
 class PlayerState:
@@ -42,6 +39,8 @@ class MatchEngine:
     def __init__(self, players_data: Dict[str, PlayerState], ball_pos: Coord):
         self._players = players_data
         self._ball_pos = ball_pos
+        self._ball_velocity: Optional[Coord] = None # vector (vx, vy) por tick
+        self._ball_target: Optional[Coord] = None
         self._ball_possessor_id: Optional[str] = None
         self._errors: Dict[str, List[str]] = {}
         self._update_possession_state()
@@ -51,6 +50,19 @@ class MatchEngine:
         """Funcion auxiliar para calcular distancia euclidiana"""
         return math.hypot(c1.x - c2.x, c1.y - c2.y)
 
+    def _step_towards(self, origin: Coord, target: Coord, max_step: float) -> Coord:
+        """
+        Funcion auxiliar para calcular el nuevo punto hacia un objetivo limitado por el paso maximo.
+        """
+        dist = self._distance(origin, target)
+        if dist > max_step and dist > 0:
+            ratio = max_step / dist
+            return Coord(
+                x=origin.x + (target.x - origin.x) * ratio,
+                y=origin.y + (target.y - origin.y) * ratio,
+            )
+        return target
+
     
     def _max_step_speed(self, speed_stat: int) -> float:
         """
@@ -59,7 +71,7 @@ class MatchEngine:
         clamped_speed = max(PACSS_MINIMO, min(PACSS_MAXIMO, speed_stat))
         ratio = (clamped_speed - PACSS_MINIMO) / (PACSS_MAXIMO - PACSS_MINIMO)
         per_second = PLAYER_MIN_SPEED + ratio * (PLAYER_MAX_SPEED - PLAYER_MIN_SPEED)
-        return per_second / TICKS_PER_SECOND
+        return per_second / settings.match_tick_rate
 
     
     def _max_step_power(self, power_stat: int, pass_ratio: float = 1.0) -> float:
@@ -69,22 +81,50 @@ class MatchEngine:
         clamped_power = max(PACSS_MINIMO, min(PACSS_MAXIMO, power_stat))
         ratio = (clamped_power - PACSS_MINIMO) / (PACSS_MAXIMO - PACSS_MINIMO)
         per_second = BALL_MIN_POWER + ratio * (BALL_MAX_POWER - BALL_MIN_POWER)
-        return (per_second * pass_ratio) / TICKS_PER_SECOND
+        return (per_second * pass_ratio) / settings.match_tick_rate
+
+
+    def _control_radius(self, control_stat: int) -> float:
+        """
+        Funcion auxiliar para calcular el radio de control.
+        """
+        ratio = (control_stat - PACSS_MINIMO) / (PACSS_MAXIMO - PACSS_MINIMO)
+        return 1.0 + ratio * 2.0
 
     
     def _update_possession_state(self) -> None:
         """
         Asigna la posesion al jugador mas cercano dentro de su radio de control.
         """
-        for p_id, player in self._players.items():
-            if player.is_on_field:
-                # El atributo control (20-100) se traduce a un radio de control
-                control_radius = 1.0 + ((player.control - PACSS_MINIMO) / (PACSS_MAXIMO - PACSS_MINIMO)) * 2.0
-                if self._distance(player.position, self._ball_pos) <= control_radius:
-                    self._ball_possessor_id = p_id
-                    return
-        self._ball_possessor_id = None
+        if self._ball_velocity is not None:
+            self._ball_possessor_id = None
+            return
+        
+        candidates = [
+            (p_id, self._distance(p.position, self._ball_pos))
+            for p_id, p in self._players.items()
+            if p.is_on_field
+            and self._distance(p.position, self._ball_pos) <= self._control_radius(p.control)
+        ]
+        self._ball_possessor_id = min(candidates, key=lambda c: c[1])[0] if candidates else None
 
+
+    def advance_ball(self) -> None:
+        """
+        Avanza la pelota un tick en la direccion de su velocidad si fue pateada.
+        """
+        if self._ball_target is None or self._ball_velocity is None:
+            return
+
+        max_step = math.hypot(self._ball_velocity.x, self._ball_velocity.y)
+        self._ball_pos = self._step_towards(self._ball_pos, self._ball_target, max_step)
+
+        # si llego al objetivo, detiene la pelota
+        if self._ball_pos == self._ball_target:
+            self._ball_velocity = None
+            self._ball_target = None
+
+        self._update_possession_state()
 
 
     #--------------Acciones------------------
@@ -95,19 +135,17 @@ class MatchEngine:
             return
 
         player = self._players[player_id]
-        max_ball_step = self._max_step_power(player.power, pass_ratio=0.7) # pase proporcional 70%
+        step_speed = self._max_step_power(player.power, pass_ratio=0.7) # pase proporcional 70%
 
         dist = self._distance(self._ball_pos, target)
-        if dist > max_ball_step and dist > 0:
-            ratio = max_ball_step / dist
-            new_x = self._ball_pos.x + (target.x - self._ball_pos.x) * ratio
-            new_y = self._ball_pos.y + (target.y - self._ball_pos.y) * ratio
-            self._ball_pos = Coord(x=new_x, y=new_y)
-        else:
-            self._ball_pos = target
+        if  dist > 0:
+            vx = ((target.x - self._ball_pos.x) / dist) * step_speed
+            vy = ((target.y - self._ball_pos.y) / dist) * step_speed
+            self._ball_velocity = Coord(x=vx, y=vy)
+            self._ball_target = target
 
         self._ball_possessor_id = None
-        self._update_possession_state()
+        self.advance_ball()
 
     
     def apply_shot(self, player_id: str, target: Coord) -> None:
@@ -116,19 +154,17 @@ class MatchEngine:
             return
 
         player = self._players[player_id]
-        max_ball_step = self._max_step_power(player.power, pass_ratio=1.0)  # Máxima potencia
+        step_speed = self._max_step_power(player.power, pass_ratio=1.0)  # Máxima potencia
 
         dist = self._distance(self._ball_pos, target)
-        if dist > max_ball_step and dist > 0:
-            ratio = max_ball_step / dist
-            new_x = self._ball_pos.x + (target.x - self._ball_pos.x) * ratio
-            new_y = self._ball_pos.y + (target.y - self._ball_pos.y) * ratio
-            self._ball_pos = Coord(x=new_x, y=new_y)
-        else:
-            self._ball_pos = target
+        if  dist > 0:
+            vx = ((target.x - self._ball_pos.x) / dist) * step_speed
+            vy = ((target.y - self._ball_pos.y) / dist) * step_speed
+            self._ball_velocity = Coord(x=vx, y=vy)
+            self._ball_target = target
 
         self._ball_possessor_id = None
-        self._update_possession_state()
+        self.advance_ball()
 
     
     def apply_movement(self, player_id: str, target: Coord) -> None:
@@ -138,15 +174,13 @@ class MatchEngine:
 
         player = self._players[player_id]
         max_step = self._max_step_speed(player.speed)
-        dist = self._distance(player.position, target)
+        has_ball = (self._ball_possessor_id == player_id)
 
-        if dist > max_step and dist > 0:
-            ratio = max_step / dist
-            new_x = player.position.x + (target.x - player.position.x) * ratio
-            new_y = player.position.y + (target.y - player.position.y) * ratio
-            player.position = Coord(x=new_x, y=new_y)
-        else:
-            player.position = target
+        player.position = self._step_towards(player.position, target, max_step)
+
+        # si el jugador tiene pelota, esta se traslada con el
+        if has_ball:
+            self._ball_pos = player.position
 
         self._update_possession_state()
 

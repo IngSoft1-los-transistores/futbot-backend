@@ -115,3 +115,49 @@ def test_limite_de_cancha_centro_en_cero(match_setup):
     assert engine.is_inside_field(Coord(x=-55.0, y=0.0)) is False
     assert engine.is_inside_field(Coord(x=55.0, y=0.0)) is False
     assert engine.is_inside_field(Coord(x=0.0, y=35.0)) is False
+
+def test_disputa_de_pelota_gana_el_mas_cercano(match_setup):
+    engine = match_setup
+    # Colocamos a p1 en (0,0) y a aliado_1 en (0.8, 0). Pelota en (1.0, 0)
+    # Aunque p1 está primero en el dict, aliado_1 está a dist 0.2 (más cerca) y p1 a 1.0.
+    engine._players["p1"].position = Coord(x=0.0, y=0.0)
+    engine._players["aliado_1"].position = Coord(x=0.8, y=0.0)
+    engine._ball_pos = Coord(x=1.0, y=0.0)
+    
+    engine._update_possession_state()
+    
+    assert engine.player_has_ball("aliado_1") is True
+    assert engine.player_has_ball("p1") is False
+
+
+def test_conduccion_jugador_corre_con_la_pelota(match_setup):
+    engine = match_setup
+    # p1 tiene la pelota al inicio en (0,0) y pelota en (0.5, 0)
+    assert engine.player_has_ball("p1") is True
+
+    # Corre hacia (10, 0)
+    engine.apply_movement("p1", Coord(x=10.0, y=0.0))
+
+    # La pelota debió trasladarse junto al jugador
+    assert engine.ball_position() == engine.player_position("p1")
+    assert engine.player_has_ball("p1") is True
+
+
+def test_remate_libera_posesion_y_avanza_en_ticks(match_setup):
+    engine = match_setup
+    assert engine.player_has_ball("p1") is True
+
+    # Patear al arco
+    engine.apply_shot("p1", Coord(x=50.0, y=0.0))
+
+    # Inmediatamente pierde la posesión
+    assert engine.player_has_ball("p1") is False
+
+    pos_inicial = engine.ball_position().x
+
+    # Simulamos el avance de la pelota en los ticks subsiguientes
+    engine.advance_ball()
+    pos_tick2 = engine.ball_position().x
+
+    assert pos_tick2 > pos_inicial
+    assert pos_tick2 < 50.0
