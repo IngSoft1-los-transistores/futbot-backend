@@ -1,28 +1,39 @@
+"""Dependencias de autenticacion para endpoints privados."""
+from time import time
+from app.models.auth_session import AuthSession
+
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jose import JWTError
+from sqlalchemy.orm import Session
 
-security = HTTPBearer()
+from app.core.security import decode_access_token
+from app.db.session import get_db
+from app.models.user import User
 
-class UserMock(BaseModel):
-    id: str
-    club_id: str
+bearer = HTTPBearer(auto_error=False)
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> UserMock:
-    """
-    Mock de autenticacion.
-    Borrar en merge.
-    """
 
-    token = credentials.credentials
-
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token de autenticacion faltante o invalido"
-        )
-
-    return UserMock(
-        id="usr-mock-1234",
-        club_id="club-mock-5678"
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+    db: Session = Depends(get_db),
+) -> User:
+    unauthorized = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Sesión inválida o vencida",
+        headers={"WWW-Authenticate": "Bearer"},
     )
+    if credentials is None:
+        raise unauthorized
+    try:
+        claims = decode_access_token(credentials.credentials)
+    except (JWTError, ValueError, TypeError) as error:
+        raise unauthorized from error
+    session = db.get(AuthSession, claims["sid"])
+    if (session is None or session.revoked or session.expires_at <= time()
+            or session.user_id != claims["sub"]):
+        raise unauthorized
+    user = db.get(User, claims["sub"])
+    if user is None:
+        raise unauthorized
+    return user

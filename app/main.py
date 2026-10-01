@@ -13,8 +13,8 @@ from app.behaviors.loader import precargar_preprogramados
 from app.core.config import settings
 from app.db.init_db import cargar_comportamientos_por_defecto, crear_tablas
 from app.db.session import SessionLocal, engine
-from app.routers import health
 from app.routers import friendly_rooms
+from app.routers import health, auth
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ async def handle_http_error(request: Request, error: StarletteHTTPException) -> 
         status_code=error.status_code,
         content={
             "detail": jsonable_encoder(error.detail),
-            "errorCode": error_codes.get(error.status_code, "HTTP_ERROR"),
+            "error_code": error_codes.get(error.status_code, "HTTP_ERROR"),
         },
         headers=error.headers,
     )
@@ -66,7 +66,7 @@ async def handle_validation_error(
         status_code=422,
         content={
             "detail": jsonable_encoder(error.errors()),
-            "errorCode": "VALIDATION_ERROR",
+            "error_code": "VALIDATION_ERROR",
         },
     )
 
@@ -78,7 +78,7 @@ async def handle_unexpected_error(request: Request, error: Exception) -> JSONRes
         status_code=500,
         content={
             "detail": "Internal server error",
-            "errorCode": "INTERNAL_SERVER_ERROR",
+            "error_code": "INTERNAL_SERVER_ERROR",
         },
     )
 
@@ -92,3 +92,4 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(friendly_rooms.router)
+app.include_router(auth.router)
