@@ -13,7 +13,7 @@ from app.behaviors.loader import precargar_preprogramados
 from app.core.config import settings
 from app.db.init_db import cargar_comportamientos_por_defecto, crear_tablas
 from app.db.session import SessionLocal, engine
-from app.routers import health
+from app.routers import health, friendly_rooms, ws
 
 logger = logging.getLogger(__name__)
 
@@ -90,3 +90,5 @@ app.add_middleware(
 )
 
 app.include_router(health.router)
+app.include_router(friendly_rooms.router)
+app.include_router(ws.router)
