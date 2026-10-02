@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.test_player import get_current_club_id
+from app.core.dependencies import get_current_user
 from app.db.session import get_db
+from app.models.user import User
 from app.schemas.player import PlayerCreate, PlayerResponse
 from app.services.exceptions_player import AppException
 from app.services.player_service import create_player
@@ -15,10 +16,10 @@ router = APIRouter(prefix="/api", tags=["create player"])
 def create_player_endpoint(
     player_data: PlayerCreate,
     db: Session = Depends(get_db),
-    club_id: str = Depends(get_current_club_id),
+    current_user: User = Depends(get_current_user),
 ):
     try:
-        player = create_player(db, club_id, player_data)
+        player = create_player(db, current_user.club.id, player_data)
         return player
 
     except AppException as e:
