@@ -3,6 +3,7 @@ from collections import Counter
 from fastapi import HTTPException, status
 from sqlalchemy import exists, select, update
 from sqlalchemy.exc import IntegrityError
+from pydantic.alias_generators import to_camel
 from sqlalchemy.orm import Session
 
 from app.db.base import ahora_utc as utc_now
@@ -154,7 +155,7 @@ def get_friendly_room(db: Session, room_id: str, club: Club) -> FriendlyRoomRead
     return FriendlyRoomRead(
         room_id=room.id,
         room_code=room.code,
-        status=room.status,
+        status=to_camel(room.status),
         match_id=match_id,
         home_club=club_read(room.creator_club_id),
         away_club=club_read(next(iter(away_ids))) if away_ids else None,
