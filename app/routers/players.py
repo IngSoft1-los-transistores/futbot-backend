@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.test_player import get_current_club_id
+from app.core.get_data_player import get_current_club_id
 from app.db.session import get_db
 from app.schemas.player import PlayerCreate, PlayerResponse
 from app.services.exceptions_player import AppException
@@ -18,7 +18,7 @@ def create_player_endpoint(
     club_id: str = Depends(get_current_club_id),
 ):
     try:
-        player = create_player(db, club_id, player_data)
+        player = create_player(db, club_id, player_data) 
         return player
 
     except AppException as e:
@@ -27,15 +27,12 @@ def create_player_endpoint(
 
 """ 
 Pasos para pobar el endpoint de crear jugador:
-    1. Levantar el servidor (uvicorn app.main:app --reload, para crear la base de datos y las tablas) y luego detenerlo (Ctrl + C).
-    2. Ejecutar el script scripts/test_data_player.py (python -c "from scripts.test_data_player import crear_datos_prueba; crear_datos_prueba()") para crear un usuario y un club 
-       de prueba. Esto generará un access token y un club_id que se imprimirán en la consola.
-    3. Copiar el club_id generado e ingresarlo en el archivo scripts/get_data_player.py en 
-       la función get_current_club_id() para que devuelva el club_id de prueba.
-    4. Levantar el servidor (uvicorn app.main:app --reload).
-    5. Usar swagger (http://localhost:8000/docs) para probar el endpoint POST /api/players. 
-       Ingresar los datos del jugador en el cuerpo de la solicitud y enviar la solicitud.
-    6. Para probar los tests, ejecutar pytest -v tests/test_players.py. Esto ejecutará los tests definidos en el archivo tests/test_players.py y mostrará los resultados en la consola.
+    1. Levantar el servidor : uvicorn app.main:app --reload
+    2. Ejecutar el core/test_data_player.py: python -c "from app.core.test_data_player import crear_datos_prueba; crear_datos_prueba()"
+    3. Copiar y guardar el club_id generado en el archivo core/get_data_player.py en 
+    4. Usar swagger (http://localhost:8000/docs) para probar el endpoint POST /api/players. 
+    Ingresar los datos del jugador en el cuerpo de la solicitud y enviar la solicitud.
+    5. Para probar los tests, ejecutar pytest -v tests/test_players.py. El test de "test_requires_authentication" dará FALSED hasta tener integrado el sistema de autenticación.
 
-    Ante cualquier errror, ejecutar rm -v futbot.db para eliminar la base de datos y volver a ejecutar el script scripts/test_data_player.py para crear un nuevo usuario y club de prueba.
+    Ante cualquier errror, ejecutar rm -v futbot.db para eliminar la base de datos y volver a ejecutar el script core/test_data_player.py para crear un nuevo usuario y club de prueba.
 """
