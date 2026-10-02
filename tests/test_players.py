@@ -1,14 +1,15 @@
 from sqlalchemy import select
 
-from app.core.dependencies import get_current_user
+from app.core.test_player import get_current_club_id
 from app.main import app
 from app.models.club import Club
 from app.models.player import Player
 from app.models.user import User
 
+club_dependency = get_current_club_id
 
 def test_create_player_valid(client, db, club, user):
-    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[club_dependency] = lambda: str(club.id)
 
     response = client.post(
         "/api/players",
@@ -31,7 +32,7 @@ def test_create_player_valid(client, db, club, user):
 
 
 def test_rejects_attribute_below_20(client, club, user):
-    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[club_dependency] = lambda: str(club.id)
 
     response = client.post(
         "/api/players",
@@ -48,7 +49,7 @@ def test_rejects_attribute_below_20(client, club, user):
 
 
 def test_rejects_attribute_above_100(client, club, user):
-    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[club_dependency] = lambda: str(club.id)
 
     response = client.post(
         "/api/players",
@@ -65,7 +66,7 @@ def test_rejects_attribute_above_100(client, club, user):
 
 
 def test_rejects_sum_different_from_300(client, club, user):
-    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[club_dependency] = lambda: str(club.id)
 
     response = client.post(
         "/api/players",
@@ -82,7 +83,7 @@ def test_rejects_sum_different_from_300(client, club, user):
 
 
 def test_rejects_name_shorter_than_3(client, club, user):
-    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[club_dependency] = lambda: str(club.id)
 
     response = client.post(
         "/api/players",
@@ -99,7 +100,7 @@ def test_rejects_name_shorter_than_3(client, club, user):
 
 
 def test_rejects_duplicate_name_in_same_club(client, db, club, user):
-    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[club_dependency] = lambda: str(club.id)
 
     db.add(
         Player(
@@ -129,7 +130,7 @@ def test_rejects_duplicate_name_in_same_club(client, db, club, user):
 
 
 def test_name_from_another_club_can_repeat(client, db, club, user):
-    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[club_dependency] = lambda: str(club.id)
 
     other_user = User(
         username="other-tester", email="other@futbot.test", password_hash="test-hash"
@@ -167,7 +168,7 @@ def test_name_from_another_club_can_repeat(client, db, club, user):
     )
     assert response.status_code == 201
 
-
+# Da FALSED hasta tener integrado el sistema de autenticación.
 def test_requires_authentication(client):
     response = client.post(
         "/api/players",
@@ -184,7 +185,7 @@ def test_requires_authentication(client):
 
 
 def test_player_is_linked_to_authenticated_club(client, db, club, user):
-    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[club_dependency] = lambda: str(club.id)
 
     response = client.post(
         "/api/players",
