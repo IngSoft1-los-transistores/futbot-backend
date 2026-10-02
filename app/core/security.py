@@ -8,6 +8,9 @@ from app.core.config import get_settings
 
 password_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+""" hashing de contraseñas """
+def hash_password(password: str) -> str:
+    return password_context.hash(password)
 
 def verify_password(password: str, password_hash: str) -> bool:
     return password_context.verify(password, password_hash)
