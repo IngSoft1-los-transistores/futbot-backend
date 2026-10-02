@@ -1,3 +1,5 @@
+"""Pruebas de estado con motor simulado y API/base de datos reales (SQLite temporal)."""
+from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
@@ -5,10 +7,10 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.engine.state import publish_engine_state
 from app.models.match_state import MatchStateRecord
 from app.schemas.match_state import MatchTick
 from app.services.match_state import StaleMatchState, publish_match_state
-
 
 
 @pytest.fixture
@@ -65,21 +67,23 @@ def match_scenario(db):
 
 
 @pytest.fixture
-def published_match(db, match_scenario):
-    publish_match_state(db, match_scenario.match.id, match_scenario.tick, expected_revision=0)
+def published_match(db, match_scenario, state_engine):
+    publish_engine_state(db, match_scenario.match.id, state_engine, expected_revision=0)
     db.commit()
+    state_engine.capture_state.assert_called_once_with()
+    state_engine.reset_mock()
     return match_scenario
 
 
 @pytest.fixture
-def state_engine(published_match):
+def state_engine(match_scenario):
     from app.schemas.coord import Coord
     from app.schemas.match_state import Position
 
     class TestEngine:
         """Doble del motor: solo las primitivas usadas por este comportamiento."""
         def __init__(self):
-            self.tick = published_match.tick.model_copy(deep=True)
+            self.tick = match_scenario.tick.model_copy(deep=True)
 
         def assigned_behavior(self, player_id):
             return "test"
@@ -103,10 +107,15 @@ def state_engine(published_match):
         def capture_state(self):
             return self.tick.model_copy(deep=True)
 
-    return TestEngine()
+    # El doble conserva un estado determinista; el mock permite verificar las
+    # llamadas al motor sin reemplazar la publicacion, persistencia ni HTTP.
+    fake = TestEngine()
+    mocked = Mock(spec_set=fake, wraps=fake)
+    mocked.tick = fake.tick
+    return mocked
 
 
-def test_both_participants_read_identical_state_without_writes(client, db, published_match):
+def test_both_participants_read_identical_state_without_writes(client, db, published_match, state_engine):
     scenario = published_match
     path = f"/api/matches/{scenario.match.id}/state"
     before = db.scalar(select(MatchStateRecord.payload))
@@ -122,6 +131,7 @@ def test_both_participants_read_identical_state_without_writes(client, db, publi
     assert len(before["players"]) == 2
     assert db.scalar(select(MatchStateRecord.payload)) == before
     assert not db.new and not db.dirty and not db.deleted
+    assert state_engine.mock_calls == []
 
 
 @pytest.mark.parametrize("participant,status", [(None, 401), ("outsider", 403)])
@@ -274,10 +284,10 @@ def test_concurrent_publishers_cannot_overwrite_each_other(engine, published_mat
         assert reader.scalar(select(MatchStateRecord.revision)) == 2
 
 
-def test_actual_behavior_updates_state_through_engine_integration(db, published_match, state_engine, monkeypatch):
+def test_behavior_updates_state_with_mocked_engine(client, db, published_match, state_engine, monkeypatch):
     from app.behaviors import loader
     from app.behaviors.executor import ejecutar_comportamiento
-    from app.engine.state import publish_engine_state
+    from app.schemas.coord import Coord
     from app.schemas.match_state import Position
 
     def behavior(player):
@@ -291,6 +301,55 @@ def test_actual_behavior_updates_state_through_engine_integration(db, published_
     player = next(p for p in state.players if str(p.player_id) == scenario.home_player.id)
     assert player.position == Position(x=5, y=3)
     assert state.revision == 2
+    state_engine.apply_movement.assert_called_once_with(scenario.home_player.id, Coord(x=5, y=3))
+    state_engine.capture_state.assert_called_once_with()
+    state_engine.register_error.assert_not_called()
+    for participant in ("home", "away"):
+        response = client.get(f"/api/matches/{scenario.match.id}/state", headers=scenario.headers[participant])
+        assert response.status_code == 200
+        assert response.json() == state.model_dump(mode="json")
+
+
+def test_mocked_engine_publishes_match_lifecycle(client, db, match_scenario, state_engine):
+    """Simula inicio, gol, pausa, reanudacion y fin sin un loop de simulacion."""
+    scenario = match_scenario
+    initial = scenario.tick.model_dump(mode="json")
+    goal = scenario.tick.model_dump(mode="json")
+    goal.update(current_time=42, score={"home": 1, "away": 0})
+    goal["actions"] = [{"type": "goal", "player_id": scenario.home_player.id,
+                        "club_id": scenario.home.id}]
+    snapshots = [
+        initial,
+        goal,
+        {**goal, "status": "paused", "actions": [{"type": "pause"}]},
+        {**goal, "actions": [{"type": "resume"}]},
+        {**goal, "status": "finished", "current_time": 300, "actions": []},
+    ]
+    ticks = [MatchTick.model_validate(snapshot) for snapshot in snapshots]
+    state_engine.capture_state.side_effect = ticks
+
+    for revision, tick in enumerate(ticks, start=1):
+        publish_engine_state(db, scenario.match.id, state_engine, expected_revision=revision - 1)
+        db.commit()
+        states = []
+        for participant in ("home", "away"):
+            response = client.get(f"/api/matches/{scenario.match.id}/state", headers=scenario.headers[participant])
+            assert response.status_code == 200
+            states.append(response.json())
+        assert states[0] == states[1]
+        state = states[0]
+        assert state["revision"] == revision
+        assert state["status"] == tick.status
+        assert state["score"] == tick.score.model_dump()
+        assert state["current_time"] == tick.current_time
+        assert state["remaining_time"] == 300 - tick.current_time
+        assert state["actions"] == [action.model_dump(mode="json") for action in tick.actions]
+        db.refresh(scenario.match)
+        assert scenario.match.status == tick.status
+        assert scenario.match.home_goals == tick.score.home
+        assert scenario.match.away_goals == tick.score.away
+
+    assert state_engine.capture_state.call_count == len(ticks)
 
 
 def test_invalid_match_id_returns_422(client, match_scenario):

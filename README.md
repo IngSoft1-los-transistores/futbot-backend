@@ -115,6 +115,17 @@ pytest tests/test_auth.py
 pytest tests/test_auth.py::test_register_con_email_duplicado
 ```
 
+Para probar el estado del partido sin el motor de simulación:
+
+```bash
+python -m pytest tests/test_match_state.py -q
+```
+
+Estas pruebas usan un mock del motor con estados controlados y una base SQLite
+temporal. Cubren publicación y consulta del estado, acceso, concurrencia,
+movimiento mediante un comportamiento y la secuencia inicio, gol, pausa,
+reanudación y fin del partido.
+
 
 ## Base de datos
 
