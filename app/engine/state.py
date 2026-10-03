@@ -35,10 +35,16 @@ class Vec2:
         n = self.length()
         return self if n <= max_len else self * (max_len / n)
 
+@dataclass(frozen=True, slots=True)
+class GoalEvent:
+    team: Team                 # equipo que suma el punto
+    player_id: str | None      # autor; None si es gol en contra o no hay autor claro
+    second: int                # segundo de juego (sin contar pausas)
+
 @dataclass
 class PlayerState:
     slots = True
-    id: str | None = None
+    id: str 
     team: Team
     pos: Vec2
     speed: float
@@ -52,7 +58,7 @@ class PlayerState:
 class BallState:
     pos: Vec2
     vel: Vec2 = field(default_factory=Vec2)
-    owner_id: str | None = None   # quién la controla, None si está libre
+    owner_id: int | None = None   # quién la controla, None si está libre
     
 @dataclass(slots=True)
 class MatchState:
@@ -66,4 +72,13 @@ class MatchState:
     tick_count: int = 0          # ticks totales del partido
     phase_tick: int = 0          # ticks transcurridos en la fase actual
     play_ticks: int = 0          # solo ticks de juego (para el reloj visible)
+    goals: list[GoalEvent] = field(default_factory=list)
+
+@dataclass(slots=True)
+class BallState:
+    pos: Vec2
+    vel: Vec2 = field(default_factory=Vec2)
+    owner_id: str | None = None
+    last_kicker_id: str | None = None
+    cooldown_ticks: int = 0     
 
