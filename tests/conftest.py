@@ -1,6 +1,9 @@
 """Configuracion y fixtures de las pruebas del backend."""
 import os
 from collections.abc import Generator
+from datetime import datetime, timedelta, timezone
+from time import time
+import uuid
 
 # Definir antes de importar la aplicacion para no usar la clave real.
 os.environ["JWT_SECRET_KEY"] = "test-only-secret-key-not-for-production"
@@ -12,10 +15,12 @@ from sqlalchemy.orm import Session, sessionmaker
 
 import app.models  # noqa: F401 - registra las tablas en Base.metadata
 from app.core.config import get_settings
-from app.core.security import password_context
+from app.core.security import create_access_token, password_context
 from app.db.base import Base
 from app.db.session import _crear_engine, get_db
 from app.main import app
+from app.models.auth_session import AuthSession
+from app.models.behavior import Behavior
 from app.models.club import Club
 from app.models.player import Player
 from app.models.user import User
@@ -52,6 +57,70 @@ def client(db: Session) -> Generator[TestClient, None, None]:
 
 
 # --- Helpers de creacion de datos ---
+
+@pytest.fixture
+def user(db: Session) -> User:
+    usuario = User(
+        username="tester",
+        email="tester@futbot.test",
+        password_hash="hash-de-prueba",
+    )
+    usuario.club = Club(name="Club de Prueba")
+    db.add(usuario)
+    db.commit()
+    return usuario
+
+
+@pytest.fixture
+def club(user: User) -> Club:
+    return user.club
+
+
+@pytest.fixture
+def auth_headers(db: Session, club: Club) -> dict[str, str]:
+    """
+    Crea una AuthSession activa para el usuario del club fixture
+    y retorna los headers HTTP con el Bearer token listo para usar.
+    """
+    user = club.user
+
+    expires_at = int(time()) + 3600
+    session_id = str(uuid.uuid4())
+
+    session = AuthSession(
+        id=session_id,
+        user_id=user.id,
+        refresh_hash="dummy_refresh_hash_for_tests",
+        expires_at=expires_at,
+        revoked=False,
+    )
+    db.add(session)
+    db.commit()
+
+    token = create_access_token(
+        user_id=user.id,
+        session_id=session.id,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def comportamiento_prueba(db: Session) -> Behavior:
+    """
+    Crea un comportamiento preprogramado generico para los tests.
+    """
+    behavior = Behavior(
+        name="Ataque Directo",
+        code="ATAQUE_DIRECTO",
+        is_preprogrammed=True,
+    )
+    db.add(behavior)
+    db.commit()
+    return behavior
+
+
 @pytest.fixture
 def login_user(db: Session) -> User:
     user = User(
@@ -71,6 +140,7 @@ def crear_player(db: Session):
 
     def crear(club_id: str, **overrides) -> Player:
         atributos = {
+            "name": "JugadorDePrueba",
             "power": 60,
             "agility": 60,
             "control": 60,
@@ -78,9 +148,11 @@ def crear_player(db: Session):
             "strength": 60,
         }
         atributos.update(overrides)
-        player = Player(club_id=club_id, name="Jugador de Prueba", **atributos)
+
+        player = Player(club_id=club_id, **atributos)
         db.add(player)
         db.commit()
+        db.refresh(player)
         return player
 
     return crear
@@ -96,19 +168,3 @@ def fixed_session_settings(monkeypatch):
     settings = get_settings()
     monkeypatch.setattr(settings, "refresh_enabled", False)
     monkeypatch.setattr(settings, "jwt_expire_minutes", 5)
-
-
-@pytest.fixture
-def user(db: Session) -> User:
-    usuario = User(
-        username="tester", email="tester@futbot.test", password_hash="hash-de-prueba"
-    )
-    usuario.club = Club(name="Club de Prueba")
-    db.add(usuario)
-    db.commit()
-    return usuario
-
-
-@pytest.fixture
-def club(user: User) -> Club:
-    return user.club
