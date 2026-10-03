@@ -24,26 +24,3 @@ def create_player_endpoint(
 
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
-
-
-"""
-Pasos para probar el endpoint de crear jugador:
-
-1. Preparar los datos de prueba:
-   python -m app.core.test_player
-
-2. Levantar el servidor:
-   uvicorn app.main:app --reload
-
-3. Abrir Swagger:
-   http://localhost:8000/docs
-
-4. Ejecutar los tests:
-   pytest -v tests/test_players.py
-
-Si hay problemas con la base de datos, eliminar futbot.db
-y volver a ejecutar el paso 1.
-
-Nota: el test test_requires_authentication puede fallar hasta
-integrar el sistema de autenticación real.
-"""
