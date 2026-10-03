@@ -20,6 +20,12 @@ from app.models.club import Club
 from app.models.player import Player
 from app.models.user import User
 
+import uuid
+from datetime import datetime, timedelta, timezone
+from time import time
+from app.models.auth_session import AuthSession
+from app.models.behavior import Behavior
+from app.core.security import create_access_token
 
 @pytest.fixture
 def engine(tmp_path) -> Generator[Engine, None, None]:
@@ -55,6 +61,47 @@ def client(db: Session) -> Generator[TestClient, None, None]:
 
 # --- Helpers de creacion de datos ---
 
+@pytest.fixture
+def auth_headers(db: Session, club: Club) -> dict[str, str]:
+    """
+    Crea una AuthSession activa para el usuario del club fixture y retorna los headers htpp con el Bearer token listo para usar.
+    """
+    user = club.user
+
+    expires_at = int(time()) + 3600
+    session_id = str(uuid.uuid4())
+
+    session = AuthSession(
+        id=session_id,
+        user_id=user.id,
+        refresh_hash="dummy_refresh_hash_for_tests",
+        expires_at=expires_at,
+        revoked=False
+    )
+    db.add(session)
+    db.commit()
+
+    token = create_access_token(
+        user_id=user.id,
+        session_id=session.id,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1)
+    )
+
+    return {"Authorization": f"Bearer {token}"}
+
+@pytest.fixture
+def comportamiento_prueba(db: Session) -> Behavior:
+    """
+    Crea un comportamiento preprogramado generico para los tests.
+    """
+    behavior = Behavior(
+        name="Ataque Directo",
+        code="ATAQUE_DIRECTO",
+        is_preprogrammed=True
+    )
+    db.add(behavior)
+    db.commit()
+    return behavior
 
 @pytest.fixture
 def club(db: Session) -> Club:
@@ -92,6 +139,7 @@ def crear_player(db: Session):
     def crear(club_id: str, **overrides) -> Player:
         """Crea un jugador con PACSS validos (60 en cada atributo suma 300)."""
         atributos = {
+            "name": "JugadorDePrueba",
             "power": 60,
             "agility": 60,
             "control": 60,
@@ -100,10 +148,10 @@ def crear_player(db: Session):
         }
         atributos.update(overrides)
 
-        player = Player(club_id=club_id, name="Jugador de Prueba", **atributos)
+        player = Player(club_id=club_id, **atributos)
         db.add(player)
         db.commit()
-
+        db.refresh(player)
         return player
 
     return crear
