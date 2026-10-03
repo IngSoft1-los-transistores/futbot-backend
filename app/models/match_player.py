@@ -52,7 +52,7 @@ class MatchPlayer(Base):
         String(36), ForeignKey("behaviors.id"), nullable=False
     )
 
-    # `esTitular` del diagrama: true si esta en cancha ahora mismo.
+    # `es_titular` del diagrama: true si esta en cancha ahora mismo.
     on_field: Mapped[bool] = mapped_column(Boolean, nullable=False)
 
     # Posicion de la formacion elegida en el pre-partido. La

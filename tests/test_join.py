@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import UserMock, get_current_user
+from app.core.dependencies import get_current_user
 from app.main import app
 from app.models.behavior import Behavior
 from app.models.club import Club
@@ -22,6 +22,7 @@ from app.models.room import (
 from app.models.squad_entry import ROLE_STARTER, SquadEntry
 from app.models.user import User
 from app.services.friendly_service import FriendlyService
+from types import SimpleNamespace
 
 """Tests de POST /api/friendly/rooms/{room_id}/join."""
 
@@ -120,9 +121,8 @@ def como() -> Generator[Callable[[str], None], None, None]:
     """Mock de autenticacion: como(club.id) simula a ese usuario logueado."""
 
     def _como(club_id: str) -> None:
-        app.dependency_overrides[get_current_user] = lambda: UserMock(
-            id=f"usuario-{club_id}",    # ← campo obligatorio que faltaba
-            club_id = club_id
+        app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+            club=SimpleNamespace(id=club_id)
         )
 
     yield _como

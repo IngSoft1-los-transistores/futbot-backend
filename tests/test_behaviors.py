@@ -189,3 +189,18 @@ def test_acciones_publicas_quedan_limitadas_al_jugador_que_recibe_la_api() -> No
         ("movement", "jugador-1", Coord(x=2, y=3)),
         ("shot", "jugador-1", Coord(x=4, y=5)),
     ]
+
+@pytest.mark.parametrize("has_ball", [True, False])
+def test_comportamientos_iniciales_se_precargan_y_ejecutan(db, monkeypatch, has_ball):
+    from sqlalchemy import select
+    from app.db.init_db import cargar_comportamientos_por_defecto
+
+    monkeypatch.setattr(loader, "_cache", {})
+    assert cargar_comportamientos_por_defecto(db) == 3
+    loader.precargar_preprogramados(db)
+    for behavior in db.scalars(select(Behavior)).all():
+        motor = MotorDePrueba(behavior_id=behavior.id)
+        motor.has_ball = has_ball
+        executor.ejecutar_comportamiento("jugador-1", motor)
+        assert motor.errors == []
+        assert len(motor.actions) == 1

@@ -191,11 +191,6 @@ class FriendlyService:
                 detail="Sala no encontrada o codigo incorrecto"
             )
 
-        if room is None or room.type != ROOM_TYPE_FRIENDLY:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Sala no encontrada."
-                )
         if room.status != ROOM_STATUS_WAITING_GUEST:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
