@@ -18,7 +18,7 @@ async def friendly_ws(
 ):
     await websocket.accept()             # Acepta primero para poder cerrar con un codigo que el navegador reciba
 
-    room_exists = db.query(Room).filter(Room.id == room.id).first() is not None
+    room_exists = db.query(Room).filter(Room_id == room_id).first() is not None
     enrolled = room_exists and db.query(Enrollment).filter(
         Enrollment.room_id == room_id, Enrollment.club_id == club_id
     ).first() is not None

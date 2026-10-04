@@ -9,7 +9,7 @@ class ConnectionManager:
 
     def full_room(self, room_id: int, user_id: int) -> bool:
         users = self.rooms.get(room_id, {})
-        return user_ide not in users and len(users) >= MAX_USERS
+        return user_id not in users and len(users) >= MAX_USERS
 
     async def connect(self, room_id: int, user_id: int, ws: WebSocket):
         self.rooms.setdefault(room_id, {})[user_id] = ws

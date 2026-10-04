@@ -211,7 +211,7 @@ def test_sala_inexistente_devuelve_404_con_el_formato_de_error(
     )
 
     assert r.status_code == 404
-    assert {"detail", "errorCode"} <= r.json().keys()   # formato unico del contrato
+    assert {"detail", "error_code"} <= r.json().keys()   # formato unico del contrato
 
 
 def test_sala_completa_devuelve_400_y_no_se_modifica(

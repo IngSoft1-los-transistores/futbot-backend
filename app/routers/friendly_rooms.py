@@ -54,7 +54,7 @@ async def join_friendly_room(
             detail="El usuario autenticado no tiene un club asociado."
         )
     service = FriendlyService(db)
-    result = service.join_room(club_id=current_user.club_id, room_id=room_id, request=payload)
+    result = service.join_room(club_id=current_user.club.id, room_id=room_id, request=payload)
     await manager.broadcast(result.room_id, {
         "type": "guest_joined",
         "awayClub": result.away_club,
