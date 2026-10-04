@@ -1,9 +1,11 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import List
 from enum import Enum
+from pydantic.alias_generators import to_camel
 
 class RoomStatus(str, Enum):
     WAITING_GUEST = "waitingGuest"
+    READY_TO_START = "readyToStart"
     IN_PROGRESS = "inProgress"
     FINISHED = "finished"
 
@@ -23,3 +25,26 @@ class FriendlyRoomResponse(BaseModel):
 
     class Config:
         populate_by_name = True
+
+class JoinPlayerSelection(BaseModel):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    player_id: str
+    behavior_id: str
+
+class JoinFriendlyRoomRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    code: str
+    starters: List[JoinPlayerSelection] = Field(alias="titulares")
+    substitutes: List[JoinPlayerSelection] = Field(alias="suplentes")
+
+class JoinFriendlyRoomResponse(BaseModel):
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+    )
+
+    room_id: str
+    status: str
+    away_club: str
