@@ -92,7 +92,7 @@ def _validate_squads(
 
 
 def _start_simulation(match_id: str) -> None:
-    """Hook for the match engine (SCRUM-40). Must not block the request."""
+    """Hook for the match engine"""
 
 
 def _get_room_for_member(db: Session, room_id: str, club: Club) -> tuple[Room, set[str]]:
