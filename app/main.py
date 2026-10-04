@@ -1,6 +1,5 @@
-from contextlib import asynccontextmanager
-
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
@@ -13,7 +12,7 @@ from app.behaviors.loader import precargar_preprogramados
 from app.core.config import settings
 from app.db.init_db import cargar_comportamientos_por_defecto, crear_tablas
 from app.db.session import SessionLocal, engine
-from app.routers import auth, friendly_rooms, health
+from app.routers import auth, friendly_rooms, health, players, ws
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +36,9 @@ app = FastAPI(title="FutBot API", lifespan=lifespan)
 
 
 @app.exception_handler(StarletteHTTPException)
-async def handle_http_error(request: Request, error: StarletteHTTPException) -> JSONResponse:
+async def handle_http_error(
+    request: Request, error: StarletteHTTPException
+) -> JSONResponse:
     error_codes = {
         400: "BAD_REQUEST",
         401: "UNAUTHORIZED",
@@ -84,6 +85,7 @@ async def handle_unexpected_error(request: Request, error: Exception) -> JSONRes
         },
     )
 
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
@@ -92,6 +94,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(friendly_rooms.router)
+app.include_router(ws.router)
+app.include_router(players.router)

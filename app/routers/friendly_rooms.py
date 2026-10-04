@@ -12,9 +12,12 @@ from app.schemas.friendly_room import (
     FriendlyRoomRead,
     FriendlyRoomResponse,
     FriendlyRoomStartRead,
+    JoinFriendlyRoomRequest,
+    JoinFriendlyRoomResponse,
 )
 from app.services.friendly_rooms import get_friendly_room, start_friendly_match
 from app.services.friendly_service import FriendlyService
+from app.ws.manager import manager
 
 router = APIRouter(
     prefix="/api/friendly/rooms",
@@ -62,3 +65,32 @@ def start_friendly_room(
     return FriendlyRoomStartRead(
         room_id=room_id, match_id=match.id, status=to_camel(ROOM_STATUS_IN_PROGRESS)
     )
+
+
+@router.post(
+    "/{room_id}/join",
+    response_model=JoinFriendlyRoomResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Unirse a una sala de amistoso"
+)
+
+async def join_friendly_room(
+    room_id: str,
+    payload: JoinFriendlyRoomRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Mismo chequeo que al crear: el usuario autenticado necesita un club
+    if not current_user.club:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El usuario autenticado no tiene un club asociado."
+        )
+    service = FriendlyService(db)
+    result = service.join_room(club_id=current_user.club.id, room_id=room_id, request=payload)
+    await manager.broadcast(result.room_id, {
+        "type": "guest_joined",
+        "awayClub": result.away_club,
+        "status": result.status,
+    })
+    return result
