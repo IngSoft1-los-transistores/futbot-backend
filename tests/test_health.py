@@ -46,12 +46,29 @@ def test_el_preflight_permite_el_header_de_autorizacion(client: TestClient) -> N
 
 
 def test_los_errores_usan_el_formato_unico_del_contrato(client: TestClient) -> None:
-    """Todo error trae `detail` y `errorCode`, como exige el contrato.
+    """Todo error trae `detail` y `error_code`, como exige el contrato.
     """
     respuesta = client.get("/api/ruta-que-no-existe")
 
     assert respuesta.status_code == 404
 
     cuerpo = respuesta.json()
-    assert cuerpo["errorCode"] == "NOT_FOUND"
+    assert cuerpo["error_code"] == "NOT_FOUND"
     assert isinstance(cuerpo["detail"], str)
+
+    assert "errorCode" not in cuerpo
+
+
+def test_error_de_autenticacion_conserva_cabecera_bearer(client: TestClient) -> None:
+    respuesta = client.get("/api/auth/me")
+    assert respuesta.status_code == 401
+    assert respuesta.json()["error_code"] == "UNAUTHORIZED"
+    assert respuesta.headers["www-authenticate"] == "Bearer"
+
+
+def test_error_de_validacion_conserva_detalle_de_campos(client: TestClient) -> None:
+    respuesta = client.post("/api/auth/login", json={})
+    assert respuesta.status_code == 422
+    cuerpo = respuesta.json()
+    assert cuerpo["error_code"] == "VALIDATION_ERROR"
+    assert {error["loc"][-1] for error in cuerpo["detail"]} == {"email", "password"}

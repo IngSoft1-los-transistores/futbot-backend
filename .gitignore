@@ -21,6 +21,8 @@ __pycache__/
 .coverage
 htmlcov/
 coverage.xml
+borrar_prueba.py
+crear_usuario.py
 
 # Editores
 .vscode/
