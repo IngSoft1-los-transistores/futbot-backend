@@ -1,9 +1,580 @@
+from collections.abc import Callable
+
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy import Engine, func, select, update
 from sqlalchemy.orm import Session
 
-from app.models.room import Room, ROOM_TYPE_FRIENDLY, ROOM_STATUS_WAITING_GUEST
-from app.models.squad_entry import SquadEntry, ROLE_STARTER, ROLE_SUBSTITUTE
+from app.core.dependencies import get_current_club
+from app.db.base import ahora_utc as utc_now
+from app.main import app
+from app.models.behavior import Behavior
+from app.models.club import Club
+from app.models.enrollment import Enrollment
+from app.models.match import ESTADO_FINISHED as MATCH_FINISHED
+from app.models.match import ESTADO_IN_PROGRESS as MATCH_IN_PROGRESS
+from app.models.match import Match
+from app.models.match_player import MatchPlayer
+from app.models.player import Player
+from app.models.room import (
+    ROOM_STATUS_CANCELLED,
+    ROOM_STATUS_IN_PROGRESS,
+    ROOM_STATUS_READY_TO_START,
+    ROOM_STATUS_WAITING_GUEST,
+    ROOM_TYPE_FRIENDLY,
+    ROOM_TYPE_PUBLIC,
+    Room,
+)
+from app.models.squad_entry import ROLE_STARTER, ROLE_SUBSTITUTE, SquadEntry
+from app.models.user import User
+from app.services.auth import start_session
+from app.services.friendly_rooms import (
+    is_behavior_in_active_match,
+    start_friendly_match,
+)
+
+"""Tests for the friendly room endpoints."""
+
+MATCH_DURATION_MINUTES = 5
+
+
+# --- Data helpers ---
+
+
+def create_club(db: Session, name: str) -> Club:
+    user = User(username=name, email=f"{name}@futbot.test", password_hash="hash")
+    db.add(user)
+    db.flush()
+    club = Club(user_id=user.id, name=name)
+    db.add(club)
+    db.commit()
+    return club
+
+
+def create_behavior(db: Session, club_id: str | None, name: str) -> Behavior:
+    behavior = Behavior(
+        club_id=club_id,
+        name=name,
+        code="def comportamiento(jugador):\n    pass\n",
+        is_preprogrammed=club_id is None,
+    )
+    db.add(behavior)
+    db.commit()
+    return behavior
+
+
+def add_squad(
+    db: Session, room: Room, club: Club, behavior: Behavior, create_player
+) -> list[Player]:
+    db.add(Enrollment(room_id=room.id, club_id=club.id))
+    players = [create_player(club.id) for _ in range(6)]
+    for index, player in enumerate(players):
+        db.add(
+            SquadEntry(
+                room_id=room.id,
+                player_id=player.id,
+                behavior_id=behavior.id,
+                role=ROLE_STARTER if index < 3 else ROLE_SUBSTITUTE,
+            )
+        )
+    db.commit()
+    return players
+
+
+def create_friendly_room(db: Session, creator: Club, room_status: str) -> Room:
+    room = Room(
+        type=ROOM_TYPE_FRIENDLY,
+        creator_club_id=creator.id,
+        min_clubs=2,
+        max_clubs=2,
+        match_duration_minutes=MATCH_DURATION_MINUTES,
+        status=room_status,
+    )
+    db.add(room)
+    db.commit()
+    return room
+
+
+def start_url(room_id: str) -> str:
+    return f"/api/friendly/rooms/{room_id}/start"
+
+
+# --- Fixtures ---
+
+
+@pytest.fixture
+def away_club(db: Session) -> Club:
+    return create_club(db, "away")
+
+
+@pytest.fixture
+def default_behavior(db: Session) -> Behavior:
+    return create_behavior(db, None, "correr")
+
+
+@pytest.fixture
+def ready_room(
+    db: Session, club: Club, away_club: Club, default_behavior: Behavior, crear_player
+) -> Room:
+    room = create_friendly_room(db, club, ROOM_STATUS_READY_TO_START)
+    add_squad(db, room, club, default_behavior, crear_player)
+    add_squad(db, room, away_club, default_behavior, crear_player)
+    return room
+
+
+@pytest.fixture
+def login_as(client: TestClient) -> Callable[[Club], None]:
+    """Authenticates as the given club (overrides the auth placeholder)."""
+
+    def _login(club: Club) -> None:
+        app.dependency_overrides[get_current_club] = lambda: club
+
+    return _login
+
+
+def assert_error(response, status_code: int, error_code: str) -> None:
+    assert response.status_code == status_code
+    body = response.json()
+    assert body["error_code"] == error_code
+    assert isinstance(body["detail"], str)
+
+
+def count(db: Session, model) -> int:
+    return db.scalar(select(func.count()).select_from(model))
+
+
+# --- Success ---
+
+
+def test_start_returns_ok_and_the_match_id(
+    client: TestClient, login_as, club: Club, ready_room: Room, db: Session
+) -> None:
+    login_as(club)
+
+    response = client.post(start_url(ready_room.id))
+
+    assert response.status_code == 200
+    match = db.scalars(select(Match)).one()
+    assert response.json() == {
+        "roomId": ready_room.id,
+        "matchId": match.id,
+        "status": "inProgress",
+    }
+
+
+def test_start_moves_room_and_match_to_in_progress(
+    client: TestClient,
+    login_as,
+    club: Club,
+    away_club: Club,
+    ready_room: Room,
+    db: Session,
+) -> None:
+    login_as(club)
+
+    client.post(start_url(ready_room.id))
+
+    db.refresh(ready_room)
+    assert ready_room.status == ROOM_STATUS_IN_PROGRESS
+    assert ready_room.started_at is not None
+
+    match = db.scalars(select(Match)).one()
+    assert match.status == MATCH_IN_PROGRESS
+    assert match.home_club_id == club.id
+    assert match.away_club_id == away_club.id
+    assert match.duration_seconds == MATCH_DURATION_MINUTES * 60
+    assert match.started_at is not None
+
+
+def test_start_creates_the_lineup_and_locks_the_players(
+    client: TestClient,
+    login_as,
+    club: Club,
+    ready_room: Room,
+    default_behavior: Behavior,
+    db: Session,
+) -> None:
+    login_as(club)
+
+    client.post(start_url(ready_room.id))
+
+    match_players = db.scalars(select(MatchPlayer)).all()
+    assert len(match_players) == 12
+    assert sum(mp.on_field for mp in match_players) == 6
+    assert all(mp.behavior_id == default_behavior.id for mp in match_players)
+
+    players = db.scalars(select(Player)).all()
+    for player in players:
+        db.refresh(player)
+    assert all(player.is_playing for player in players)
+
+
+def test_the_away_club_can_also_start(
+    client: TestClient, login_as, away_club: Club, ready_room: Room
+) -> None:
+    login_as(away_club)
+
+    assert client.post(start_url(ready_room.id)).status_code == 200
+
+
+# --- Auth and access ---
+
+
+def test_start_without_authentication_is_rejected(
+    client: TestClient, ready_room: Room, db: Session
+) -> None:
+    response = client.post(start_url(ready_room.id))
+
+    assert_error(response, 401, "UNAUTHORIZED")
+    assert response.headers["www-authenticate"] == "Bearer"
+    assert count(db, Match) == 0
+
+
+def bearer(db: Session, club: Club) -> dict[str, str]:
+    """Authorization header of a real login session."""
+    return {"Authorization": f"Bearer {start_session(db, club.user).access_token}"}
+
+
+def test_start_with_a_valid_session(
+    client: TestClient, club: Club, ready_room: Room, db: Session
+) -> None:
+    response = client.post(start_url(ready_room.id), headers=bearer(db, club))
+
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize("authorization", ["Bearer not-a-jwt", "Basic dXNlcjpwYXNz"])
+def test_start_with_an_invalid_token_is_rejected(
+    client: TestClient, ready_room: Room, db: Session, authorization: str
+) -> None:
+    response = client.post(
+        start_url(ready_room.id), headers={"Authorization": authorization}
+    )
+
+    assert_error(response, 401, "UNAUTHORIZED")
+    assert count(db, Match) == 0
+
+
+def test_start_after_logout_is_rejected(
+    client: TestClient, club: Club, ready_room: Room, db: Session
+) -> None:
+    headers = bearer(db, club)
+    client.post("/api/auth/logout", headers=headers)
+
+    assert_error(client.post(start_url(ready_room.id), headers=headers), 401, "UNAUTHORIZED")
+    assert count(db, Match) == 0
+
+
+def test_unknown_room_is_not_found(
+    client: TestClient, login_as, club: Club
+) -> None:
+    login_as(club)
+
+    assert_error(client.post(start_url("room-that-does-not-exist")), 404, "ROOM_NOT_FOUND")
+
+
+def test_a_league_room_is_not_found(
+    client: TestClient, login_as, club: Club, db: Session
+) -> None:
+    league = Room(
+        type=ROOM_TYPE_PUBLIC,
+        name="League",
+        creator_club_id=club.id,
+        min_clubs=3,
+        max_clubs=4,
+        match_duration_minutes=MATCH_DURATION_MINUTES,
+        status=ROOM_STATUS_READY_TO_START,
+    )
+    db.add(league)
+    db.flush()  # generates league.id
+    db.add(Enrollment(room_id=league.id, club_id=club.id))
+    db.commit()
+    login_as(club)
+
+    assert_error(client.post(start_url(league.id)), 404, "ROOM_NOT_FOUND")
+
+
+def test_a_club_outside_the_room_is_forbidden(
+    client: TestClient, login_as, ready_room: Room, db: Session
+) -> None:
+    login_as(create_club(db, "outsider"))
+
+    assert_error(client.post(start_url(ready_room.id)), 403, "NOT_ROOM_MEMBER")
+    assert count(db, Match) == 0
+
+
+# --- Room state ---
+
+
+def test_a_match_cannot_be_started_twice(
+    client: TestClient, login_as, club: Club, ready_room: Room, db: Session
+) -> None:
+    login_as(club)
+    client.post(start_url(ready_room.id))
+
+    response = client.post(start_url(ready_room.id))
+
+    assert_error(response, 400, "MATCH_ALREADY_STARTED")
+    assert count(db, Match) == 1
+
+
+def test_a_room_without_guest_is_not_full(
+    client: TestClient,
+    login_as,
+    club: Club,
+    default_behavior: Behavior,
+    db: Session,
+    crear_player,
+) -> None:
+    room = create_friendly_room(db, club, ROOM_STATUS_WAITING_GUEST)
+    add_squad(db, room, club, default_behavior, crear_player)
+    login_as(club)
+
+    assert_error(client.post(start_url(room.id)), 400, "ROOM_NOT_FULL")
+
+
+def test_a_cancelled_room_is_not_ready(
+    client: TestClient, login_as, club: Club, ready_room: Room, db: Session
+) -> None:
+    ready_room.status = ROOM_STATUS_CANCELLED
+    db.commit()
+    login_as(club)
+
+    assert_error(client.post(start_url(ready_room.id)), 400, "ROOM_NOT_READY")
+
+
+def test_a_concurrent_start_is_detected(
+    engine: Engine, club: Club, ready_room: Room, db: Session
+) -> None:
+    """The other club starts the room after this request read it."""
+    db.get(Room, ready_room.id)
+    with engine.begin() as other_request:
+        other_request.execute(
+            update(Room)
+            .where(Room.id == ready_room.id)
+            .values(status=ROOM_STATUS_IN_PROGRESS, started_at=utc_now())
+        )
+
+    with pytest.raises(HTTPException) as error:
+        start_friendly_match(db, ready_room.id, club)
+
+    assert error.value.status_code == 400
+    assert error.value.detail["error_code"] == "MATCH_ALREADY_STARTED"
+    assert count(db, Match) == 0
+
+
+# --- Squads ---
+
+
+def assert_invalid_squad_without_side_effects(
+    client: TestClient, room: Room, db: Session
+) -> None:
+    assert_error(client.post(start_url(room.id)), 400, "INVALID_SQUAD")
+    db.refresh(room)
+    assert room.status == ROOM_STATUS_READY_TO_START
+    assert count(db, Match) == 0
+    assert count(db, MatchPlayer) == 0
+
+
+def test_a_squad_with_only_two_starters_is_invalid(
+    client: TestClient, login_as, club: Club, ready_room: Room, db: Session
+) -> None:
+    starter = db.scalars(
+        select(SquadEntry)
+        .join(Player, SquadEntry.player_id == Player.id)
+        .where(Player.club_id == club.id, SquadEntry.role == ROLE_STARTER)
+    ).first()
+    db.delete(starter)
+    db.commit()
+    login_as(club)
+
+    assert_invalid_squad_without_side_effects(client, ready_room, db)
+
+
+def test_a_squad_with_a_deleted_player_is_invalid(
+    client: TestClient, login_as, club: Club, away_club: Club, ready_room: Room, db: Session
+) -> None:
+    player = db.scalars(select(Player).where(Player.club_id == away_club.id)).first()
+    player.deleted_at = utc_now()
+    db.commit()
+    login_as(club)
+
+    assert_invalid_squad_without_side_effects(client, ready_room, db)
+
+
+def test_a_squad_with_a_player_from_a_third_club_is_invalid(
+    client: TestClient, login_as, club: Club, ready_room: Room, db: Session, crear_player
+) -> None:
+    entry = db.scalars(
+        select(SquadEntry)
+        .join(Player, SquadEntry.player_id == Player.id)
+        .where(Player.club_id == club.id)
+    ).first()
+    entry.player_id = crear_player(create_club(db, "third").id).id
+    db.commit()
+    login_as(club)
+
+    assert_invalid_squad_without_side_effects(client, ready_room, db)
+
+
+def test_a_squad_with_a_player_already_playing_is_invalid(
+    client: TestClient, login_as, club: Club, ready_room: Room, db: Session
+) -> None:
+    player = db.scalars(select(Player).where(Player.club_id == club.id)).first()
+    player.is_playing = True
+    db.commit()
+    login_as(club)
+
+    assert_error(client.post(start_url(ready_room.id)), 400, "INVALID_SQUAD")
+
+
+def test_a_squad_with_another_clubs_behavior_is_invalid(
+    client: TestClient, login_as, club: Club, away_club: Club, ready_room: Room, db: Session
+) -> None:
+    foreign_behavior = create_behavior(db, club.id, "home_only")
+    entry = db.scalars(
+        select(SquadEntry)
+        .join(Player, SquadEntry.player_id == Player.id)
+        .where(Player.club_id == away_club.id)
+    ).first()
+    entry.behavior_id = foreign_behavior.id
+    db.commit()
+    login_as(club)
+
+    assert_invalid_squad_without_side_effects(client, ready_room, db)
+
+
+def test_a_squad_with_a_deleted_behavior_is_invalid(
+    client: TestClient, login_as, club: Club, ready_room: Room, db: Session
+) -> None:
+    own_behavior = create_behavior(db, club.id, "deleted")
+    own_behavior.deleted_at = utc_now()
+    entry = db.scalars(
+        select(SquadEntry)
+        .join(Player, SquadEntry.player_id == Player.id)
+        .where(Player.club_id == club.id)
+    ).first()
+    entry.behavior_id = own_behavior.id
+    db.commit()
+    login_as(club)
+
+    assert_invalid_squad_without_side_effects(client, ready_room, db)
+
+
+# --- Behavior lock ---
+
+
+def test_behaviors_are_locked_only_while_the_match_is_active(
+    client: TestClient,
+    login_as,
+    club: Club,
+    ready_room: Room,
+    default_behavior: Behavior,
+    db: Session,
+) -> None:
+    unused_behavior = create_behavior(db, club.id, "unused")
+    assert not is_behavior_in_active_match(db, default_behavior.id)
+
+    login_as(club)
+    client.post(start_url(ready_room.id))
+
+    assert is_behavior_in_active_match(db, default_behavior.id)
+    assert not is_behavior_in_active_match(db, unused_behavior.id)
+
+    db.execute(update(Match).values(status=MATCH_FINISHED))
+    db.commit()
+    assert not is_behavior_in_active_match(db, default_behavior.id)
+
+
+# --- GET /api/friendly/rooms/{room_id} ---
+
+
+def room_url(room_id: str) -> str:
+    return f"/api/friendly/rooms/{room_id}"
+
+
+def test_read_a_ready_room(
+    client: TestClient,
+    login_as,
+    club: Club,
+    away_club: Club,
+    ready_room: Room,
+    default_behavior: Behavior,
+) -> None:
+    login_as(club)
+
+    response = client.get(room_url(ready_room.id))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["roomId"] == ready_room.id
+    assert body["status"] == "readyToStart"
+    assert body["matchId"] is None
+    assert body["homeClub"]["clubId"] == club.id
+    assert body["homeClub"]["clubName"] == club.name
+    assert body["awayClub"]["clubId"] == away_club.id
+
+    players = body["homeClub"]["players"]
+    assert [p["role"] for p in players] == [ROLE_STARTER] * 3 + [ROLE_SUBSTITUTE] * 3
+    assert players[0]["behaviorId"] == default_behavior.id
+    assert players[0]["behaviorName"] == default_behavior.name
+
+
+def test_read_a_room_without_guest(
+    client: TestClient,
+    login_as,
+    club: Club,
+    default_behavior: Behavior,
+    db: Session,
+    crear_player,
+) -> None:
+    room = create_friendly_room(db, club, ROOM_STATUS_WAITING_GUEST)
+    add_squad(db, room, club, default_behavior, crear_player)
+    login_as(club)
+
+    body = client.get(room_url(room.id)).json()
+
+    assert body["status"] == "waitingGuest"
+    assert body["awayClub"] is None
+    assert len(body["homeClub"]["players"]) == 6
+
+
+def test_read_a_started_room_includes_the_match(
+    client: TestClient, login_as, away_club: Club, ready_room: Room
+) -> None:
+    login_as(away_club)
+    match_id = client.post(start_url(ready_room.id)).json()["matchId"]
+
+    body = client.get(room_url(ready_room.id)).json()
+
+    assert body["status"] == "inProgress"
+    assert body["matchId"] == match_id
+
+
+def test_read_a_room_requires_authentication(
+    client: TestClient, ready_room: Room
+) -> None:
+    assert_error(client.get(room_url(ready_room.id)), 401, "UNAUTHORIZED")
+
+
+def test_read_an_unknown_room_is_not_found(
+    client: TestClient, login_as, club: Club
+) -> None:
+    login_as(club)
+
+    assert_error(client.get(room_url("room-that-does-not-exist")), 404, "ROOM_NOT_FOUND")
+
+
+def test_read_a_room_of_another_club_is_forbidden(
+    client: TestClient, login_as, ready_room: Room, db: Session
+) -> None:
+    login_as(create_club(db, "outsider"))
+
+    assert_error(client.get(room_url(ready_room.id)), 403, "NOT_ROOM_MEMBER")
+
+
+# --- POST /api/friendly/rooms ---
 
 
 def test_create_friendly_room_unauthorized_without_token(client: TestClient):
