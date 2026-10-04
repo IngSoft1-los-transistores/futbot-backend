@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.db.init_db import cargar_comportamientos_por_defecto, crear_tablas
 from app.db.session import SessionLocal, engine
 from app.routers import health, auth, matches
+from app.ws.matches import router as match_stream_router
 
 logger = logging.getLogger(__name__)
 
@@ -93,3 +94,5 @@ app.include_router(health.router)
 app.include_router(auth.router)
 
 app.include_router(matches.router)
+
+app.include_router(match_stream_router)

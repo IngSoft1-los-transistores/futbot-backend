@@ -23,6 +23,7 @@ htmlcov/
 coverage.xml
 borrar_prueba.py
 crear_usuario.py
+scripts/
 
 # Editores
 .vscode/
