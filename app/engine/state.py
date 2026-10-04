@@ -59,6 +59,8 @@ class BallState:
     pos: Vec2
     vel: Vec2 = field(default_factory=Vec2)
     owner_id: int | None = None   # quién la controla, None si está libre
+    last_kicker_id: str | None = None
+    cooldown_ticks: int = 0  
     
 @dataclass(slots=True)
 class MatchState:
@@ -73,12 +75,5 @@ class MatchState:
     phase_tick: int = 0          # ticks transcurridos en la fase actual
     play_ticks: int = 0          # solo ticks de juego (para el reloj visible)
     goals: list[GoalEvent] = field(default_factory=list)
-
-@dataclass(slots=True)
-class BallState:
-    pos: Vec2
-    vel: Vec2 = field(default_factory=Vec2)
-    owner_id: str | None = None
-    last_kicker_id: str | None = None
-    cooldown_ticks: int = 0     
+   
 

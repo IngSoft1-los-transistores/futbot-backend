@@ -38,11 +38,6 @@ class MatchEngine:
             max_workers=len(state.players), thread_name_prefix="bot"
         )
         self._busy: dict[str, asyncio.Future] = {}
-        # Pool propio: un bot colgado no le quita hilos al resto de la app.
-        self._pool = ThreadPoolExecutor(
-            max_workers=len(state.players), thread_name_prefix="bot"
-        )
-        self._busy: dict[str, asyncio.Future] = {}   # bots con hilo todavía vivo
 
     async def _collect_actions(self) -> dict[str, Action]:
         ctx = TickContext(self.state, self.field, self.behavior_ids)
