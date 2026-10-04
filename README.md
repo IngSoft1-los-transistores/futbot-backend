@@ -74,6 +74,38 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 
 El archivo `.env` **no se sube al repositorio**: contiene secretos y es propio de cada máquina.
 
+## Comandos rápidos con make
+
+El `Makefile` de la raíz agrupa los comandos de uso diario. Usa directamente el Python del `.venv`, así que **no hace falta activar el entorno virtual** para correrlos.
+
+**Instalar make**
+
+| Sistema | Cómo |
+|---|---|
+| Linux / WSL | `sudo apt install make` (en Ubuntu suele venir instalado) |
+| macOS | `xcode-select --install` |
+| Windows | `winget install ezwinports.make` y reiniciar la terminal |
+
+Funciona igual desde PowerShell, Git Bash, WSL, Linux y macOS.
+
+**Comandos**
+
+| Comando | Qué hace |
+|---|---|
+| `make help` | Lista los comandos disponibles |
+| `make install` | Crea el `.venv` si no existe e instala las dependencias |
+| `make reinstall` | Borra el `.venv` y lo crea de cero |
+| `make dev` | Levanta la API en http://localhost:8000 con recarga automática |
+| `make dev PORT=8001` | Lo mismo, en otro puerto |
+| `make test` | Corre los tests y muestra la cobertura en la terminal |
+| `make coverage` | Igual que `make test`, y además genera el reporte en `htmlcov/index.html` |
+| `make lint` | Revisa el código con [Ruff](https://docs.astral.sh/ruff/) (reglas en `ruff.toml`) |
+| `make clean` | Borra cachés y reportes. No toca `.env`, `.venv` ni `futbot.db` |
+
+`make test` devuelve código de salida distinto de 0 si algún test falla, así que sirve para CI.
+
+**Windows y WSL:** el `.venv` es propio de cada sistema, así que uno creado desde Windows no funciona en WSL ni al revés. Si se usa WSL, clonar el repo dentro de WSL (por ejemplo en `~/`), no trabajar sobre `/mnt/c/...`: además de evitar el problema, es mucho más rápido. `make reinstall` queda para cuando el entorno se rompe o se cambia de sistema sobre la misma carpeta. Si `make dev` estaba corriendo, reiniciarlo después: sigue usando el `.venv` viejo hasta que se corta.
+
 ## Correr la aplicación
 
 ```bash
