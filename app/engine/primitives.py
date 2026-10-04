@@ -38,7 +38,7 @@ class MatchEngine:
     """
     def __init__(self, players_data: Dict[str, PlayerState], ball_pos: Coord):
         self._players = players_data
-        self._ball_pos = ball_pos
+        self._ball_pos = Coord(x=ball_pos.x, y=ball_pos.y)
         self._ball_velocity: Optional[Coord] = None # vector (vx, vy) por tick
         self._ball_target: Optional[Coord] = None
         self._ball_possessor_id: Optional[str] = None
@@ -55,13 +55,14 @@ class MatchEngine:
         Funcion auxiliar para calcular el nuevo punto hacia un objetivo limitado por el paso maximo.
         """
         dist = self._distance(origin, target)
-        if dist > max_step and dist > 0:
-            ratio = max_step / dist
-            return Coord(
+        if dist < max_step or dist == 0:
+            return Coord(x=target.x, y=target.y)
+        
+        ratio = max_step / dist
+        return Coord(
                 x=origin.x + (target.x - origin.x) * ratio,
                 y=origin.y + (target.y - origin.y) * ratio,
-            )
-        return target
+        )
 
     
     def _max_step_speed(self, speed_stat: int) -> float:
@@ -134,18 +135,24 @@ class MatchEngine:
             self.register_error(player_id, "Coordenada fuera de limites de pase")
             return
 
+
+        if not self.player_has_ball(player_id):
+            self.register_error(player_id, "El jugador intento pasar sin tener la pelota.")
+            return
+        
         player = self._players[player_id]
         step_speed = self._max_step_power(player.power, pass_ratio=0.7) # pase proporcional 70%
 
         dist = self._distance(self._ball_pos, target)
-        if  dist > 0:
-            vx = ((target.x - self._ball_pos.x) / dist) * step_speed
-            vy = ((target.y - self._ball_pos.y) / dist) * step_speed
-            self._ball_velocity = Coord(x=vx, y=vy)
-            self._ball_target = target
 
+        if  dist == 0:
+            return
+            
+        vx = ((target.x - self._ball_pos.x) / dist) * step_speed
+        vy = ((target.y - self._ball_pos.y) / dist) * step_speed
+        self._ball_velocity = Coord(x=vx, y=vy)
+        self._ball_target = Coord(x=target.x, y=target.y)
         self._ball_possessor_id = None
-        self.advance_ball()
 
     
     def apply_shot(self, player_id: str, target: Coord) -> None:
@@ -153,16 +160,22 @@ class MatchEngine:
             self.register_error(player_id, "Coordenada fuera de límites para tiro")
             return
 
+        if not self.player_has_ball(player_id):
+            self.register_error(player_id, "El jugador intento rematar sin tener la pelota.")
+            return
+
         player = self._players[player_id]
         step_speed = self._max_step_power(player.power, pass_ratio=1.0)  # Máxima potencia
 
         dist = self._distance(self._ball_pos, target)
-        if  dist > 0:
-            vx = ((target.x - self._ball_pos.x) / dist) * step_speed
-            vy = ((target.y - self._ball_pos.y) / dist) * step_speed
-            self._ball_velocity = Coord(x=vx, y=vy)
-            self._ball_target = target
 
+        if  dist == 0:
+            return
+        
+        vx = ((target.x - self._ball_pos.x) / dist) * step_speed
+        vy = ((target.y - self._ball_pos.y) / dist) * step_speed
+        self._ball_velocity = Coord(x=vx, y=vy)
+        self._ball_target = Coord(x=target.x, y=target.y)
         self._ball_possessor_id = None
         self.advance_ball()
 
@@ -180,7 +193,7 @@ class MatchEngine:
 
         # si el jugador tiene pelota, esta se traslada con el
         if has_ball:
-            self._ball_pos = player.position
+            self._ball_pos = Coord(x=player.position.x, y=player.position.y)
 
         self._update_possession_state()
 
@@ -192,7 +205,7 @@ class MatchEngine:
         """
         Devuelve coordenadas en tiempo real de la pelota.
         """
-        return self._ball_pos
+        return Coord(x=self._ball_pos.x, y=self._ball_pos.y)
 
     
     def nearest_teammate_position(self, player_id: str) -> Coord:
@@ -208,11 +221,10 @@ class MatchEngine:
             and p.is_on_field
         ]
         if not allies:
-            return me.position
+            return Coord(x=me.position.x, y=me.position.y)
 
-        closest_ally = min(allies, key=lambda p: self._distance(me.position, p.position)
-        )
-        return closest_ally.position
+        closest_ally = min(allies, key=lambda p: self._distance(me.position, p.position))
+        return Coord(x=closest_ally.position.x, y=closest_ally.position.y)
 
     
     def nearest_opponent_position(self, player_id: str) -> Coord:
@@ -227,31 +239,34 @@ class MatchEngine:
             and p.is_on_field
         ]
         if not enemies:
-            return me.position
+            return Coord(x=me.position.x, y=me.position.y)
 
         closest_enemy = min(enemies, key=lambda p: self._distance(me.position, p.position)
         )
-        return closest_enemy.position
+        return Coord(x=closest_enemy.position.x, y=closest_enemy.position.y)
 
     def own_goal_position(self, player_id: str) -> Coord:
         """
         Devuelve coordenadas de arco aliado.
         """
-        return self._players[player_id].own_goal
+        og = self._players[player_id].own_goal
+        return Coord(x=og.x, y=og.y)
     
     
     def opponent_goal_position(self, player_id: str) -> Coord:
         """
         Devuelve coordenadas de arco enemigo.
         """
-        return self._players[player_id].enemy_goal
+        eg = self._players[player_id].enemy_goal
+        return Coord(x=eg.x, y=eg.y)
 
     
     def player_position(self, player_id: str) -> Coord:
         """
         Devuelve coordenadas del jugador.
         """
-        return self._players[player_id].position
+        pos = self._players[player_id].position
+        return Coord(x=pos.x, y=pos.y)
     
 
     def player_has_ball(self, player_id: str) -> bool:
