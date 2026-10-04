@@ -13,8 +13,7 @@ from app.behaviors.loader import precargar_preprogramados
 from app.core.config import settings
 from app.db.init_db import cargar_comportamientos_por_defecto, crear_tablas
 from app.db.session import SessionLocal, engine
-from app.routers import friendly_rooms
-from app.routers import health, auth
+from app.routers import auth, friendly_rooms, health
 
 logger = logging.getLogger(__name__)
 
@@ -48,13 +47,16 @@ async def handle_http_error(request: Request, error: StarletteHTTPException) -> 
         422: "VALIDATION_ERROR",
         503: "SERVICE_UNAVAILABLE",
     }
-    return JSONResponse(
-        status_code=error.status_code,
-        content={
+    # Services may choose the code: detail={"detail": ..., "error_code": ...}.
+    if isinstance(error.detail, dict) and "error_code" in error.detail:
+        content = error.detail
+    else:
+        content = {
             "detail": jsonable_encoder(error.detail),
             "error_code": error_codes.get(error.status_code, "HTTP_ERROR"),
-        },
-        headers=error.headers,
+        }
+    return JSONResponse(
+        status_code=error.status_code, content=content, headers=error.headers
     )
 
 
@@ -91,5 +93,5 @@ app.add_middleware(
 )
 
 app.include_router(health.router)
-app.include_router(friendly_rooms.router)
 app.include_router(auth.router)
+app.include_router(friendly_rooms.router)

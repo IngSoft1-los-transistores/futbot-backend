@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import decode_access_token
 from app.db.session import get_db
+from app.models.club import Club
 from app.models.user import User
 
 bearer = HTTPBearer(auto_error=False)
@@ -37,3 +38,13 @@ def get_current_user(
     if user is None:
         raise unauthorized
     return user
+
+
+def get_current_club(user: User = Depends(get_current_user)) -> Club:
+    if user.club is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sesión inválida o vencida",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user.club
