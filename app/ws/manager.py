@@ -2,7 +2,7 @@
 import asyncio
 from dataclasses import dataclass
 from threading import RLock
-
+from fastapi import WebSocket
 from app.schemas.match_state import MatchState
 
 
@@ -64,3 +64,33 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+
+
+MAX_USERS = 2
+
+
+class RoomConnectionManager:
+    def __init__(self):
+        self.rooms: dict[str, dict[str, WebSocket]] = {}        # { sala_id: { usuario_id: WebSocket } }
+
+    def full_room(self, room_id: str, user_id: str) -> bool:
+        users = self.rooms.get(room_id, {})
+        return user_id not in users and len(users) >= MAX_USERS
+
+    async def connect(self, room_id: str, user_id: str, ws: WebSocket):
+        self.rooms.setdefault(room_id, {})[user_id] = ws
+
+    def disconnect(self, room_id: str, user_id: str):
+        self.rooms.get(room_id, {}).pop(user_id, None)
+        if room_id in self.rooms and not self.rooms[room_id]:
+            del self.rooms[room_id]
+
+    async def send(self, ws: WebSocket, message: dict):
+        await ws.send_json(message)              # Solo a un usuario
+
+    async def broadcast(self, room_id: str, message: dict):
+        for ws in list(self.rooms.get(room_id, {}).values()):
+            await ws.send_json(message)          # A toda la sala
+
+
+room_manager = RoomConnectionManager()
