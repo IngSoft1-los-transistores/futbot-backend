@@ -17,7 +17,7 @@ from app.schemas.friendly_room import (
 )
 from app.services.friendly_rooms import get_friendly_room, start_friendly_match
 from app.services.friendly_service import FriendlyService
-from app.ws.manager import manager
+from app.ws.manager import room_manager as manager
 
 router = APIRouter(
     prefix="/api/friendly/rooms",

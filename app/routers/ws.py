@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.room import Room
 from app.models.enrollment import Enrollment
-from app.ws.manager import manager
+from app.ws.manager import room_manager as manager
 
 router = APIRouter()
 
@@ -18,7 +18,7 @@ async def friendly_ws(
 ):
     await websocket.accept()             # Acepta primero para poder cerrar con un codigo que el navegador reciba
 
-    room_exists = db.query(Room).filter(Room_id == room_id).first() is not None
+    room_exists = db.query(Room).filter(Room.id == room_id).first() is not None
     enrolled = room_exists and db.query(Enrollment).filter(
         Enrollment.room_id == room_id, Enrollment.club_id == club_id
     ).first() is not None
@@ -31,7 +31,7 @@ async def friendly_ws(
         await websocket.close(code=4403) # Tu club no participa en la sala
         return
 
-    manager.connect(room_id, club_id, websocket)
+    await manager.connect(room_id, club_id, websocket)
     await manager.broadcast(room_id, {"type": "club_connected", "club_id": club_id})
 
     try:
