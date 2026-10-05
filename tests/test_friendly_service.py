@@ -1,6 +1,9 @@
 import pytest
 from unittest.mock import MagicMock, patch
 from fastapi import HTTPException, status
+from collections import namedtuple
+
+FakePlayerRow = namedtuple("FakePlayerRow", ["name", "id"])
 
 from app.services.friendly_service import FriendlyService, generate_room_code
 from app.schemas.friendly_room import CreateFriendlyRoomRequest, PlayerSelection, RoomStatus
@@ -38,7 +41,7 @@ def test_validate_players_and_behaviors_success(mock_db, valid_payload):
     club_id = "club-123"
 
     # Mock de respuesta de base de datos para jugadores válidos
-    mock_player_results = [MagicMock(id=f"p-{i}") for i in range(1, 7)]
+    mock_player_results = [FakePlayerRow(name=f"p-{i}", id=f"uuid-{i}") for i in range(1, 7)]
     mock_behavior_results = [MagicMock(id=f"b-{i}") for i in range(1, 7)]
 
     # Mapeo de llamadas a db.query().filter().all()
@@ -123,7 +126,7 @@ def test_validate_invalid_behaviors(mock_db, valid_payload):
     """Lanza 400 Bad Request si un comportamiento no pertenece al club ni es preprogramado."""
     service = FriendlyService(mock_db)
 
-    mock_player_results = [MagicMock(id=f"p-{i}") for i in range(1, 7)]
+    mock_player_results = [FakePlayerRow(name=f"p-{i}", id=f"uuid-{i}") for i in range(1, 7)]
     # Solo 4 comportamientos resultan válidos en DB
     mock_behavior_results = [MagicMock(id=f"b-{i}") for i in range(1, 5)]
 
