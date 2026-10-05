@@ -66,22 +66,23 @@ class FriendlyService:
 
         # Validacion de pertenencia de jugadores existentes en el club
         valid_players = (
-            self.db.query(Player.id)
+            self.db.query(Player.name, Player.id)
             .filter(
-                Player.id.in_(player_ids),
+                Player.name.in_(player_ids),
                 Player.club_id == club_id,
                 Player.deleted_at.is_(None)
-            )
-            .all()
+            ).all()
         )
-        valid_players_ids = {p.id for p in valid_players}
-
+        valid_players_ids = {p.name: p.id for p in valid_players}
+        
         if len(valid_players_ids) != len(player_ids):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Al menos un jugador seleccionado no pertenece a tu club o no esta disponible."
             )
 
+        for selection in all_selecctions:
+            selection.player_id = valid_players_ids[selection.player_id]
 
 
 
