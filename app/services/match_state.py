@@ -1,12 +1,12 @@
 """Lectura autorizada y publicacion atomica del estado completo de un tick."""
-from sqlalchemy import select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.club import Club
 from app.models.match import Match
 from app.models.match_player import MatchPlayer
-from app.models.match_state import MatchStateRecord
+from app.engine.live_state import match_states
+from app.ws.manager import manager
 from app.models.player import Player
 from app.models.user import User
 from app.schemas.match_state import ClubState, MatchState, MatchTick, PlayerState
@@ -28,30 +28,47 @@ class StaleMatchState(Exception):
     pass
 
 
-def get_match_state(db: Session, match_id: str, user: User) -> MatchState:
-    """No inicializa, ejecuta comportamientos ni avanza el reloj."""
+def authorize_match(db: Session, match_id: str, user: User) -> Match:
+    """Valida acceso sin consultar el estado en vivo."""
     match = db.get(Match, match_id)
     if match is None:
         raise MatchNotFound
     club_id = db.scalar(select(Club.id).where(Club.user_id == user.id))
     if club_id not in (match.home_club_id, match.away_club_id):
         raise MatchAccessDenied
-    # Leer el payload completo en una sola consulta evita mezclar revisiones.
-    payload = db.scalar(select(MatchStateRecord.payload).where(MatchStateRecord.match_id == match_id))
-    if payload is None:
+    return match
+
+
+def get_match_state(db: Session, match_id: str, user: User) -> MatchState:
+    authorize_match(db, match_id, user)
+    state = match_states.get(match_id)
+    if state is None:
         raise MatchStateUnavailable
-    return MatchState.model_validate(payload)
+    return state
 
 
 def publish_match_state(
     db: Session, match_id: str, tick: MatchTick, *, expected_revision: int
 ) -> MatchState:
-    """El motor llama al inicio y al completar cada tick; debe hacer commit.
+    """Publica solo en memoria y avisa a los sockets, sin flush ni commit.
 
-    Una revision esperada de cero crea el estado inicial. Los siguientes ticks
-    deben indicar la revision publicada anteriormente. Una lectura HTTP nunca
-    llama a esta funcion. El motor debe capturar el tick bajo su propio lock.
+    El motor debe usar publish_engine_tick para persistir goles/transiciones.
+    La publicación es inmediata: un rollback de SQL no revierte un tick en vivo.
     """
+    with match_states.lock(match_id):
+        state = prepare_match_state(db, match_id, tick, expected_revision=expected_revision)
+        publish_prepared_state(state)
+        return state
+
+
+def publish_prepared_state(state: MatchState) -> None:
+    """Llamar bajo el lock del partido, tras persistir los eventos si corresponde."""
+    match_states.put(state)
+    manager.broadcast(state)
+
+
+def prepare_match_state(db: Session, match_id: str, tick: MatchTick, *, expected_revision: int) -> MatchState:
+    """Valida y construye un snapshot sin escribir; requiere el lock del partido."""
     if expected_revision < 0:
         raise ValueError("La revision no puede ser negativa")
     tick = MatchTick.model_validate(tick.model_dump())
@@ -62,13 +79,13 @@ def publish_match_state(
         raise ValueError("El partido todavia no fue iniciado")
     if tick.current_time > match.duration_seconds:
         raise ValueError("El tiempo supera la duracion del partido")
-    previous = db.scalar(select(MatchStateRecord.payload).where(MatchStateRecord.match_id == match_id))
+    previous = match_states.get(match_id)
     if previous is not None:
-        if previous["revision"] != expected_revision:
+        if previous.revision != expected_revision:
             raise StaleMatchState
-        if previous["status"] == "finished":
+        if previous.status == "finished":
             raise ValueError("El partido ya termino")
-        if tick.current_time < previous["current_time"]:
+        if tick.current_time < previous.current_time:
             raise ValueError("El tiempo no puede retroceder")
     elif expected_revision != 0:
         raise StaleMatchState
@@ -110,28 +127,4 @@ def publish_match_state(
             has_ball=owner == entry.player_id,
         ) for entry, player in sorted(roster, key=lambda row: row[0].player_id)],
     )
-    # sqlite3 en modo legacy no abre la transaccion con SELECT. Sin BEGIN,
-    # liberar el primer savepoint confirmaria el tick antes del commit del motor.
-    connection = db.connection()
-    if connection.dialect.name == "sqlite" and not connection.connection.driver_connection.in_transaction:
-        connection.exec_driver_sql("BEGIN")
-    # El savepoint revierte tambien marcador/estado si falla la publicacion.
-    with db.begin_nested():
-        if expected_revision == 0:
-            try:
-                db.add(MatchStateRecord(match_id=match_id, revision=1, payload=state.model_dump(mode="json")))
-                db.flush()
-            except IntegrityError as error:
-                raise StaleMatchState from error
-        else:
-            result = db.execute(update(MatchStateRecord).where(
-                MatchStateRecord.match_id == match_id,
-                MatchStateRecord.revision == expected_revision,
-            ).values(revision=state.revision, payload=state.model_dump(mode="json")))
-            if result.rowcount != 1:
-                raise StaleMatchState
-        match.status = tick.status
-        match.home_goals = tick.score.home
-        match.away_goals = tick.score.away
-        db.flush()
     return state

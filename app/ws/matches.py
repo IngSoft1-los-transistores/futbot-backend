@@ -9,6 +9,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.security import HTTPAuthorizationCredentials
+from jose import JWTError
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
@@ -17,8 +18,8 @@ from app.core.config import get_settings
 from app.core.dependencies import get_current_user
 from app.core.security import decode_access_token
 from app.db.session import get_db
-from app.services.match_state import MatchAccessDenied, MatchNotFound, MatchStateUnavailable, get_match_state
-from app.ws.sqlite_changes import SQLiteChanges
+from app.services.match_state import MatchAccessDenied, MatchNotFound, MatchStateUnavailable, authorize_match, get_match_state
+from app.ws.manager import manager
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ HEARTBEAT_SECONDS = 15
 
 
 def read_authorized_state(bind, match_id, token):
-    # Una transacción corta por notificación: nunca retener una revisión antigua.
+    # Una sesión corta para la autenticación y el snapshot inicial.
     with Session(bind) as db:
         user = get_current_user(HTTPAuthorizationCredentials(scheme='Bearer', credentials=token), db)
         expires_at = decode_access_token(token, verify_exp=False)['exp']
@@ -35,6 +36,12 @@ def read_authorized_state(bind, match_id, token):
         except MatchStateUnavailable:
             state = None
         return state, expires_at
+
+
+def validate_access(bind, match_id, token):
+    with Session(bind) as db:
+        user = get_current_user(HTTPAuthorizationCredentials(scheme='Bearer', credentials=token), db)
+        authorize_match(db, match_id, user)
 
 
 async def error_message(socket, status, message):
@@ -50,7 +57,7 @@ async def match_stream(socket: WebSocket, match_id: str, db: Session = Depends(g
         await socket.close(code=1008)
         return
     await socket.accept()
-    changes = None
+    subscription = None
     received = changed = None
     try:
         # El navegador no permite Authorization en el handshake. El JWT viaja
@@ -72,7 +79,9 @@ async def match_stream(socket: WebSocket, match_id: str, db: Session = Depends(g
             await error_message(socket, 422, 'El ID del partido no es válido.')
             return
         bind = db.get_bind()
-        changes = SQLiteChanges(bind)
+        # Suscribir antes de leer el snapshot inicial evita perder un tick.
+        claims = decode_access_token(token)
+        subscription = manager.subscribe(match_id, claims['sid'])
         state, expires_at = await run_in_threadpool(read_authorized_state, bind, match_id, token)
         revision = 0
         if state is None:
@@ -84,7 +93,7 @@ async def match_stream(socket: WebSocket, match_id: str, db: Session = Depends(g
                 await socket.close(code=1000)
                 return
         received = asyncio.create_task(socket.receive_text())
-        changed = asyncio.create_task(changes.wait())
+        changed = asyncio.create_task(subscription.queue.get())
         next_ping = time() + HEARTBEAT_SECONDS
         pong_deadline = None
         while True:
@@ -105,20 +114,24 @@ async def match_stream(socket: WebSocket, match_id: str, db: Session = Depends(g
                 next_ping = time() + HEARTBEAT_SECONDS
                 received = asyncio.create_task(socket.receive_text())
             if changed in done:
-                changed.result()
-                # Rearmar la espera antes de leer; los eventos se acumulan en el watcher.
-                changed = asyncio.create_task(changes.wait())
-                state, expires_at = await run_in_threadpool(read_authorized_state, bind, match_id, token)
-                if state and state['revision'] > revision:
-                    await socket.send_json({'type': 'state', 'state': state})
+                message = changed.result()
+                if message['type'] == 'revoked' or subscription.revoked:
+                    await error_message(socket, 401, 'Sesión inválida o vencida')
+                    return
+                changed = asyncio.create_task(subscription.queue.get())
+                state = message['state']
+                if state['revision'] > revision:
+                    await socket.send_json(message)
                     revision = state['revision']
                     if state['status'] == 'finished':
                         await socket.close(code=1000)
                         return
             if not pong_deadline and time() >= next_ping:
+                # Revalidación de permisos; no consulta ni sondea snapshots.
+                await run_in_threadpool(validate_access, bind, match_id, token)
                 await socket.send_json({'type': 'ping'})
                 pong_deadline = time() + HEARTBEAT_SECONDS
-    except HTTPException:
+    except (HTTPException, JWTError):
         await error_message(socket, 401, 'Sesión inválida o vencida')
     except MatchAccessDenied:
         await error_message(socket, 403, 'No tenés acceso a este partido.')
@@ -130,13 +143,10 @@ async def match_stream(socket: WebSocket, match_id: str, db: Session = Depends(g
         logger.exception('No se pudo transmitir el estado del partido')
         await error_message(socket, 503, 'No se pudo actualizar el partido. Reintentando automáticamente…')
     finally:
-        # Señalar al hilo antes de cualquier await, incluso si ASGI cancela la tarea.
-        if changes:
-            changes.stop.set()
+        if subscription:
+            manager.unsubscribe(subscription)
         with anyio.CancelScope(shield=True):
             for task in (received, changed):
                 if task:
                     task.cancel()
             await asyncio.gather(*(task for task in (received, changed) if task), return_exceptions=True)
-            if changes:
-                await changes.close()

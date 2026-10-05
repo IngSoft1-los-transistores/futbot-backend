@@ -7,8 +7,9 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.engine.state import publish_engine_state
-from app.models.match_state import MatchStateRecord
+from app.engine.state import publish_engine_state, publish_engine_tick
+from app.engine.live_state import match_states
+from app.models.goal import Goal
 from app.schemas.match_state import MatchTick
 from app.services.match_state import StaleMatchState, publish_match_state
 
@@ -118,7 +119,7 @@ def state_engine(match_scenario):
 def test_both_participants_read_identical_state_without_writes(client, db, published_match, state_engine):
     scenario = published_match
     path = f"/api/matches/{scenario.match.id}/state"
-    before = db.scalar(select(MatchStateRecord.payload))
+    before = match_states.get(scenario.match.id).model_dump(mode="json")
     for participant in ("home", "away", "home"):
         response = client.get(path, headers=scenario.headers[participant])
         assert response.status_code == 200
@@ -129,7 +130,7 @@ def test_both_participants_read_identical_state_without_writes(client, db, publi
     assert before["score"] == {"home": 0, "away": 0}
     assert before["remaining_time"] == 300
     assert len(before["players"]) == 2
-    assert db.scalar(select(MatchStateRecord.payload)) == before
+    assert match_states.get(scenario.match.id).model_dump(mode="json") == before
     assert not db.new and not db.dirty and not db.deleted
     assert state_engine.mock_calls == []
 
@@ -152,7 +153,7 @@ def test_missing_state_does_not_initialize_match(client, db, match_scenario):
     path = f"/api/matches/{match_scenario.match.id}/state"
     response = client.get(path, headers=match_scenario.headers["home"])
     assert response.status_code == 409
-    assert db.scalar(select(MatchStateRecord)) is None
+    assert match_states.get(match_scenario.match.id) is None
     # La autorizacion se verifica antes de informar que no hay estado.
     assert client.get(path, headers=match_scenario.headers["outsider"]).status_code == 403
 
@@ -164,8 +165,7 @@ def test_next_tick_updates_complete_snapshot_and_persisted_score(client, db, pub
     data["players"][0]["position"] = {"x": 12, "y": 3}
     data["ball"].update(x=12, y=3, owner_player_id=scenario.home_player.id)
     data["actions"] = [{"type": "goal", "player_id": scenario.home_player.id, "club_id": scenario.home.id}]
-    publish_match_state(db, scenario.match.id, MatchTick.model_validate(data), expected_revision=1)
-    db.commit()
+    publish_engine_tick(db, scenario.match.id, MatchTick.model_validate(data), expected_revision=1)
     response = client.get(f"/api/matches/{scenario.match.id}/state", headers=scenario.headers["away"])
     state = response.json()
     assert state["revision"] == 2
@@ -183,31 +183,47 @@ def test_stale_tick_cannot_overwrite_newer_revision(db, published_match):
     scenario = published_match
     publish_match_state(db, scenario.match.id, scenario.tick, expected_revision=1)
     db.commit()
-    before = db.scalar(select(MatchStateRecord.payload))
+    before = match_states.get(scenario.match.id).model_dump(mode="json")
     with pytest.raises(StaleMatchState):
         publish_match_state(db, scenario.match.id, scenario.tick, expected_revision=1)
-    assert db.scalar(select(MatchStateRecord.payload)) == before
+    assert match_states.get(scenario.match.id).model_dump(mode="json") == before
 
 
-def test_uncommitted_tick_is_invisible_and_rollback_preserves_previous_state(db, engine, published_match):
+def test_movement_tick_has_no_sql_writes_or_commit(db, engine, published_match):
+    from sqlalchemy import event
     scenario = published_match
-    # El tick solo es visible tras el commit de la transaccion del motor.
-    match_id = scenario.match.id
-    db.commit()
-    with Session(engine) as writer:
-        publish_match_state(writer, match_id, scenario.tick, expected_revision=1)
-        with Session(engine) as reader:
-            assert reader.scalar(select(MatchStateRecord.revision)) == 1
-        writer.rollback()
-    with Session(engine) as reader:
-        assert reader.scalar(select(MatchStateRecord.revision)) == 1
+    writes, commits = [], []
+    def record_sql(conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().split()[0].upper() in ('INSERT', 'UPDATE', 'DELETE', 'REPLACE'):
+            writes.append(statement)
+    def committed(session):
+        commits.append(True)
+    event.listen(engine, 'before_cursor_execute', record_sql)
+    event.listen(db, 'after_commit', committed)
+    try:
+        tick = scenario.tick.model_copy(deep=True)
+        tick.current_time = 1
+        state = publish_engine_tick(db, scenario.match.id, tick, expected_revision=1)
+        assert state.revision == 2
+        assert writes == [] and commits == []
+        assert not db.new and not db.dirty
+        db.rollback()  # No hay transacción de persistencia para un tick en vivo.
+        assert match_states.get(scenario.match.id).revision == 2
+    finally:
+        event.remove(engine, 'before_cursor_execute', record_sql)
+        event.remove(db, 'after_commit', committed)
 
 
-def test_state_survives_new_database_session(db, engine, published_match):
+def test_state_is_shared_between_sessions_in_the_same_process(engine, published_match):
+    from app.services.match_state import get_match_state
+    from app.models.user import User
     with Session(engine) as reader:
-        payload = reader.scalar(select(MatchStateRecord.payload))
-        assert payload["match_id"] == published_match.match.id
-        assert payload["revision"] == 1
+        user = reader.get(User, published_match.home.user_id)
+        state = get_match_state(reader, published_match.match.id, user)
+        assert str(state.match_id) == published_match.match.id
+        assert state.revision == 1
+        state.score.home = 100
+        assert match_states.get(published_match.match.id).score.home == 0
 
 
 @pytest.mark.parametrize("change", ["duplicate", "foreign_player", "missing_player", "invalid_owner", "too_late", "foreign_action"])
@@ -228,7 +244,7 @@ def test_invalid_tick_does_not_change_published_state(db, published_match, chang
         data["actions"] = [{"type": "goal", "club_id": scenario.outsider.id}]
     with pytest.raises(ValueError):
         publish_match_state(db, scenario.match.id, MatchTick.model_validate(data), expected_revision=1)
-    assert db.scalar(select(MatchStateRecord.revision)) == 1
+    assert match_states.get(scenario.match.id).revision == 1
 
 
 def test_paused_and_finished_states_and_no_reopening(db, published_match):
@@ -281,7 +297,7 @@ def test_concurrent_publishers_cannot_overwrite_each_other(engine, published_mat
     assert results.count(2) == 1
     assert results.count(None) == 1
     with Session(engine) as reader:
-        assert reader.scalar(select(MatchStateRecord.revision)) == 2
+        assert match_states.get(match_id).revision == 2
 
 
 def test_behavior_updates_state_with_mocked_engine(client, db, published_match, state_engine, monkeypatch):
@@ -357,16 +373,50 @@ def test_invalid_match_id_returns_422(client, match_scenario):
     assert response.status_code == 422
 
 
-def test_initial_publication_is_rolled_back_with_match_score(db, engine, match_scenario):
-    scenario = match_scenario
-    match_id = scenario.match.id
+def test_failed_goal_commit_does_not_publish_or_leave_a_goal(db, published_match, monkeypatch):
+    from sqlalchemy.exc import SQLAlchemyError
+    scenario = published_match
     tick = scenario.tick.model_copy(deep=True)
     tick.score.home = 1
-    db.commit()
-    with Session(engine) as writer:
-        publish_match_state(writer, match_id, tick, expected_revision=0)
-        writer.rollback()
-    from app.models.match import Match
-    with Session(engine) as reader:
-        assert reader.get(MatchStateRecord, match_id) is None
-        assert reader.get(Match, match_id).home_goals == 0
+    from app.schemas.match_state import MatchAction
+    tick.actions = [MatchAction(
+        type='goal', club_id=scenario.home.id, player_id=scenario.home_player.id)]
+    def fail():
+        raise SQLAlchemyError('Disco no disponible')
+    monkeypatch.setattr(db, 'commit', fail)
+    with pytest.raises(SQLAlchemyError):
+        publish_engine_tick(db, scenario.match.id, tick, expected_revision=1)
+    assert match_states.get(scenario.match.id).revision == 1
+    assert list(db.scalars(select(Goal))) == []
+    db.refresh(scenario.match)
+    assert scenario.match.home_goals == 0
+
+
+def test_goal_is_saved_once_and_replayed_revision_is_rejected(db, published_match):
+    from app.schemas.match_state import MatchAction
+    scenario = published_match
+    tick = scenario.tick.model_copy(deep=True)
+    tick.current_time = 42
+    tick.score.home = 1
+    tick.actions = [MatchAction(type='goal', club_id=scenario.home.id, player_id=scenario.home_player.id)]
+    publish_engine_tick(db, scenario.match.id, tick, expected_revision=1)
+    with pytest.raises(StaleMatchState):
+        publish_engine_tick(db, scenario.match.id, tick, expected_revision=1)
+    goals = list(db.scalars(select(Goal)))
+    assert len(goals) == 1
+    assert goals[0].player_id == scenario.home_player.id
+    assert goals[0].club_id == scenario.home.id
+    assert goals[0].second == 42
+    tick.current_time = 43
+    tick.actions = []
+    publish_engine_tick(db, scenario.match.id, tick, expected_revision=2)
+    assert len(list(db.scalars(select(Goal)))) == 1
+
+
+def test_score_without_a_goal_event_is_rejected_by_engine(db, published_match):
+    scenario = published_match
+    tick = scenario.tick.model_copy(deep=True)
+    tick.score.home = 1
+    with pytest.raises(ValueError, match='evento de gol'):
+        publish_engine_tick(db, scenario.match.id, tick, expected_revision=1)
+    assert match_states.get(scenario.match.id).revision == 1

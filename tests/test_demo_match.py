@@ -1,5 +1,6 @@
 from sqlalchemy import func, select
 
+from app.models.goal import Goal
 from app.models.match import Match
 from app.models.match_player import MatchPlayer
 from app.models.player import Player
@@ -39,6 +40,10 @@ def test_demo_login_and_both_users_see_updates(client, db):
         if elapsed < 120:
             assert state['actions'][0]['type'] == 'goal'
             assert state['players'] != initial.json()['players']
+    goals = list(db.scalars(select(Goal).where(Goal.match_id == demo.match_id).order_by(Goal.second)))
+    assert len(goals) == 2
+    assert [goal.second for goal in goals] == [40, 80]
+    assert [goal.club_id for goal in goals] == demo.club_ids
     assert state['status'] == 'finished'
     assert db.get(Room, demo.room_id).status == 'finished'
     assert all(not db.get(Player, pid).is_playing for squad in demo.player_ids for pid in squad)

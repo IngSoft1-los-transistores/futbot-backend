@@ -22,7 +22,6 @@ TABLAS_ESPERADAS = {
     "squad_entries",
     "matches",
     "match_players",
-    "match_states",
     "goals",
 }
 

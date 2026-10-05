@@ -121,3 +121,11 @@ def fixed_session_settings(monkeypatch):
     settings = get_settings()
     monkeypatch.setattr(settings, "refresh_enabled", False)
     monkeypatch.setattr(settings, "jwt_expire_minutes", 5)
+
+
+@pytest.fixture(autouse=True)
+def isolated_live_state():
+    from app.engine.live_state import match_states
+    match_states.clear()
+    yield
+    match_states.clear()

@@ -9,7 +9,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.core.security import create_access_token, decode_access_token
 from app.models.auth_session import AuthSession
-from app.models.match_state import MatchStateRecord
+from app.engine.live_state import match_states
 from app.models.user import User
 from app.services.auth import start_session
 from app.services.match_state import publish_match_state
@@ -34,17 +34,16 @@ def authenticate(socket, token):
     return socket.receive_json()
 
 
-def test_both_clubs_receive_committed_updates_and_reconnect_to_latest(client, db, engine, demo):
+def test_both_clubs_receive_broadcast_without_commit_and_reconnect_to_latest(client, db, engine, demo):
     tokens = [token_for(db, email) for email in demo.emails]
     with connect(client, demo.match_id) as home, connect(client, demo.match_id) as away:
         initial = authenticate(home, tokens[0])
         assert initial == authenticate(away, tokens[1])
         assert initial['type'] == 'state'
-        # Escritura desde otra sesión/hilo, igual que el script externo.
+        # El motor puede publicar desde otro hilo, sin commit ni escritura de estado.
         def publish():
             with Session(engine) as writer:
                 publish_match_state(writer, demo.match_id, make_tick(demo, 40), expected_revision=1)
-                writer.commit()
         with ThreadPoolExecutor() as executor:
             executor.submit(publish).result(timeout=10)
         updated = home.receive_json()
@@ -75,8 +74,7 @@ def test_websocket_rejects_invalid_access(client, db, demo, login_user, case, st
 
 def test_waiting_socket_receives_first_state_and_final_state(client, db, demo):
     token = token_for(db, demo.emails[0])
-    db.execute(delete(MatchStateRecord).where(MatchStateRecord.match_id == demo.match_id))
-    db.commit()
+    match_states.clear()
     with connect(client, demo.match_id) as socket:
         assert authenticate(socket, token)['status'] == 409
         publish_match_state(db, demo.match_id, make_tick(demo, 0), expected_revision=0)
@@ -94,8 +92,7 @@ def test_logout_revokes_open_socket(client, db, demo):
     token = token_for(db, demo.emails[0])
     with connect(client, demo.match_id) as socket:
         assert authenticate(socket, token)['type'] == 'state'
-        db.execute(update(AuthSession).where(AuthSession.id == decode_access_token(token)['sid']).values(revoked=True))
-        db.commit()
+        assert client.post('/api/auth/logout', headers={'Authorization': f'Bearer {token}'}).status_code == 204
         assert socket.receive_json()['status'] == 401
 
 
