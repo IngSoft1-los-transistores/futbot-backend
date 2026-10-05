@@ -12,7 +12,8 @@ from app.behaviors.loader import precargar_preprogramados
 from app.core.config import settings
 from app.db.init_db import cargar_comportamientos_por_defecto, crear_tablas
 from app.db.session import SessionLocal, engine
-from app.routers import auth, friendly_rooms, health, players, ws
+from app.routers import auth, friendly_rooms, health, players, ws, matches
+from app.ws.matches import router as match_stream_router
 
 logger = logging.getLogger(__name__)
 
@@ -100,3 +101,7 @@ app.include_router(auth.router)
 app.include_router(friendly_rooms.router)
 app.include_router(ws.router)
 app.include_router(players.router)
+
+app.include_router(matches.router)
+
+app.include_router(match_stream_router)

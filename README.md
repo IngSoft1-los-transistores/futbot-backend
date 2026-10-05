@@ -115,6 +115,136 @@ pytest tests/test_auth.py
 pytest tests/test_auth.py::test_register_con_email_duplicado
 ```
 
+Para probar el estado del partido sin el motor de simulación:
+
+```bash
+python -m pytest tests/test_match_state.py -q
+```
+
+Estas pruebas usan un mock del motor con estados controlados y una base SQLite
+temporal. Cubren publicación y consulta del estado, acceso, concurrencia,
+movimiento mediante un comportamiento y la secuencia inicio, gol, pausa,
+reanudación y fin del partido.
+
+
+## Ver un partido de prueba en el navegador
+
+Sin creación/inicio de partidos ni motor, el script genera dos usuarios, dos
+clubes, seis jugadores por club (tres en cancha), una sala y un partido iniciado.
+Publica estados mediante el mismo servicio que usa la API. Los movimientos y
+goles son simulados; no ejecuta los comportamientos de los jugadores.
+
+Usar dos terminales. Detener primero el backend anterior si ocupa el puerto 8000.
+El script levanta su propia API en el mismo proceso que la simulación.
+
+1. Frontend, desde `futbot-frontend`:
+
+   ```bash
+   npm run dev
+   ```
+
+2. Demo y backend, desde `futbot-backend`, con el entorno virtual activado:
+esta demo levanta su propio backend para pruebas
+   ```bash
+   python -m scripts.demo_match
+   ```
+
+
+
+El script usa `DATABASE_URL` del `.env` (por defecto `futbot.db`). Ejecutarlo
+desde `futbot-backend`. No iniciar otro uvicorn para esta demo.
+No borra datos: cada ejecución agrega cuentas y un partido nuevos.
+
+La terminal imprime los dos emails, la contraseña `FutbotDemo123!`, el ID y la
+URL del partido. Iniciar sesión en `http://localhost:5173/login` con uno de esos
+emails y abrir la URL `/partidos/<ID>` indicada (o ingresar el ID en Home).
+Después, presionar **Enter en la terminal de la demo** para comenzar.
+
+Durante dos minutos publica una actualización por segundo: movimientos,
+posesión, reloj, gol local a los 40 segundos, gol visitante a los 80 y resultado
+final 1–1. Los dos goles quedan registrados en `goals`. La cancha usa la escala provisional 100 × 60, con origen en el centro.
+Para probar ambos usuarios, usar otro perfil o una ventana de incógnito.
+
+Opciones:
+
+```bash
+python -m scripts.demo_match --static           # Solo estado inicial, sin animación
+python -m scripts.demo_match --duration 60      # Demo de un minuto
+python -m scripts.demo_match --no-wait          # Animación inmediata, sin Enter
+python -m scripts.demo_match --frontend-url http://localhost:5174
+python -m scripts.demo_match --port 8001        # También cambiar las URLs del frontend
+```
+
+`Ctrl+C` detiene la demo y su backend. Los goles, marcador persistido y datos
+de los clubes se conservan; las posiciones y el reloj en memoria se pierden.
+Al finalizar o con `--static`, la API permanece abierta hasta `Ctrl+C`. Para
+volver a empezar, ejecutar el comando y usar las nuevas credenciales y URL.
+Si la sesión vence durante una demo larga, volver a iniciar sesión y abrir la URL.
+El frontend debe apuntar al backend mediante `VITE_API_URL` y su origen debe
+estar incluido en `CORS_ORIGINS`.
+
+## Estado del partido por WebSocket
+
+El frontend mantiene una conexión a `/api/matches/{match_id}/ws`; no consulta
+periódicamente el endpoint HTTP de estado. Configurar `VITE_WS_URL` en el
+frontend (por ejemplo `ws://localhost:8000`, o `wss://` si se usa HTTPS).
+Si no se configura, deriva esa URL de `VITE_API_URL`.
+
+El primer mensaje del cliente es `{"type":"auth","token":"<access_token>"}`.
+El servidor valida la sesión y la pertenencia a uno de los clubes antes de
+enviar datos. El token no se envía en la URL. El origen del navegador debe
+estar permitido en `CORS_ORIGINS`.
+
+Mensajes del servidor:
+
+- `{"type":"state","state":{...}}`: snapshot completo, con `match_id` y
+  `revision`. Se envía el último al conectar y los nuevos al publicarse.
+- `{"type":"error","status":409,"message":"..."}`: todavía no hay estado;
+  la conexión permanece abierta hasta la primera publicación.
+- Otros errores: `401` (sesión), `403` (acceso), `404` (partido), `422` (ID).
+  Estos cierran la conexión y no provocan reintentos del frontend.
+- `{"type":"ping"}` cada 15 segundos; el cliente responde
+  `{"type":"pong"}`. Es mantenimiento de conexión, no consulta de estado.
+
+El último snapshot se guarda en `app/engine/live_state.py`, en un diccionario
+por `match_id`. `publish_match_state` valida el tick, actualiza ese diccionario y
+llama a `manager.broadcast` (`app/ws/manager.py`). Cada socket tiene una cola
+acotada: un cliente lento recibe el último snapshot sin bloquear al motor. No
+hay tabla de snapshots ni observadores de archivos. No se hace flush ni commit
+para publicar posiciones, posesión o reloj.
+
+Motor y servidor deben vivir en el **mismo proceso, con un solo worker**.
+Los hilos sí comparten el estado. Para varios procesos o máquinas hará falta un
+broker compartido; un diccionario local no se comparte entre workers. Al reiniciar
+se pierde el estado en vivo y el motor debe volver a publicar un estado inicial.
+No se recuperan posiciones históricas desde la base. Si una base anterior conserva
+la tabla `match_states`, queda sin uso; no se elimina automáticamente.
+
+La entrada recomendada para el motor es `publish_engine_tick` (o
+`publish_engine_state` con un objeto que implemente `capture_state`). Usar una
+sesión limpia y confirmar la creación del partido antes de publicar. Esta capa:
+
+- Valida que cada incremento del marcador tenga sus eventos `goal` con club.
+- Persiste una fila `Goal` por gol, con club, autor y segundo; actualiza el
+  marcador y los goles del jugador. Un gol en contra se guarda sin autor.
+- Hace commit solo ante goles o cambios de estado (pausa, reanudación, fin).
+- Al terminar, registra el final y libera a los jugadores; cierra la sala amistosa.
+- Publica después del commit de esos eventos. Si falla, revierte SQL y conserva
+  la revisión anterior en memoria. Los reintentos con revisión antigua se rechazan.
+
+No agregar un `db.commit()` después de cada tick del motor. La función de bajo
+nivel `publish_match_state` solo publica; no crea goles ni confirma transacciones.
+El motor debe emitir los eventos de gol, no deducir autores a partir del marcador.
+La demo pasa por la capa del motor y sirve de ejemplo de integración.
+
+Ante una desconexión, la pantalla conserva el último snapshot con una advertencia
+y reconecta con espera progresiva de 1 a 10 segundos. Al reconectar recibe el
+estado vigente y descarta revisiones anteriores. Al finalizar, cierra el socket.
+La sesión se comprueba al conectar y en el heartbeat, sin consultar snapshots.
+El logout notifica al manager para cerrar la conexión de inmediato; el vencimiento
+del token también la cierra aunque no se publique ningún estado.
+
+Para probar el stream y sus permisos: `python -m pytest tests/test_match_websocket.py -q`.
 
 ## Base de datos
 

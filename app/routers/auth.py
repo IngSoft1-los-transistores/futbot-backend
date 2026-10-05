@@ -20,6 +20,7 @@ from app.db.session import get_db
 
 from app.schemas.auth import UserRead, UserRegister
 from app.services.auth_services import create_user_with_club
+from app.ws.manager import manager
 
 """router = APIRouter(prefix="/api/auth", tags=["register"])"""
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -92,4 +93,5 @@ def logout_endpoint(credentials: HTTPAuthorizationCredentials | None = Depends(b
         AuthSession.id == claims["sid"], AuthSession.user_id == claims["sub"],
     ).values(revoked=True))
     db.commit()
+    manager.revoke_session(claims["sid"])
     return Response(status_code=204)
