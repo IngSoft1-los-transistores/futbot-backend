@@ -118,7 +118,7 @@ def state_engine(match_scenario):
 
 def test_both_participants_read_identical_state_without_writes(client, db, published_match, state_engine):
     scenario = published_match
-    path = f"/api/matches/{scenario.match.id}/state"
+    path = f"/matches/{scenario.match.id}/state"
     before = match_states.get(scenario.match.id).model_dump(mode="json")
     for participant in ("home", "away", "home"):
         response = client.get(path, headers=scenario.headers[participant])
@@ -138,19 +138,19 @@ def test_both_participants_read_identical_state_without_writes(client, db, publi
 @pytest.mark.parametrize("participant,status", [(None, 401), ("outsider", 403)])
 def test_access_denied(client, published_match, participant, status):
     headers = published_match.headers.get(participant, {})
-    response = client.get(f"/api/matches/{published_match.match.id}/state", headers=headers)
+    response = client.get(f"/matches/{published_match.match.id}/state", headers=headers)
     assert response.status_code == status
     assert "players" not in response.json()
 
 
 def test_unknown_match_returns_404(client, match_scenario):
-    response = client.get(f"/api/matches/{uuid4()}/state", headers=match_scenario.headers["home"])
+    response = client.get(f"/matches/{uuid4()}/state", headers=match_scenario.headers["home"])
     assert response.status_code == 404
     assert response.json()["error_code"] == "NOT_FOUND"
 
 
 def test_missing_state_does_not_initialize_match(client, db, match_scenario):
-    path = f"/api/matches/{match_scenario.match.id}/state"
+    path = f"/matches/{match_scenario.match.id}/state"
     response = client.get(path, headers=match_scenario.headers["home"])
     assert response.status_code == 409
     assert match_states.get(match_scenario.match.id) is None
@@ -166,7 +166,7 @@ def test_next_tick_updates_complete_snapshot_and_persisted_score(client, db, pub
     data["ball"].update(x=12, y=3, owner_player_id=scenario.home_player.id)
     data["actions"] = [{"type": "goal", "player_id": scenario.home_player.id, "club_id": scenario.home.id}]
     publish_engine_tick(db, scenario.match.id, MatchTick.model_validate(data), expected_revision=1)
-    response = client.get(f"/api/matches/{scenario.match.id}/state", headers=scenario.headers["away"])
+    response = client.get(f"/matches/{scenario.match.id}/state", headers=scenario.headers["away"])
     state = response.json()
     assert state["revision"] == 2
     assert state["score"] == {"home": 1, "away": 0}
@@ -268,7 +268,7 @@ def test_rejects_non_finite_coordinates():
 
 
 def test_get_is_only_public_operation(client, published_match):
-    path = f"/api/matches/{published_match.match.id}/state"
+    path = f"/matches/{published_match.match.id}/state"
     for method in ("post", "put", "patch", "delete"):
         assert getattr(client, method)(path, headers=published_match.headers["home"]).status_code == 405
 
@@ -321,7 +321,7 @@ def test_behavior_updates_state_with_mocked_engine(client, db, published_match, 
     state_engine.capture_state.assert_called_once_with()
     state_engine.register_error.assert_not_called()
     for participant in ("home", "away"):
-        response = client.get(f"/api/matches/{scenario.match.id}/state", headers=scenario.headers[participant])
+        response = client.get(f"/matches/{scenario.match.id}/state", headers=scenario.headers[participant])
         assert response.status_code == 200
         assert response.json() == state.model_dump(mode="json")
 
@@ -349,7 +349,7 @@ def test_mocked_engine_publishes_match_lifecycle(client, db, match_scenario, sta
         db.commit()
         states = []
         for participant in ("home", "away"):
-            response = client.get(f"/api/matches/{scenario.match.id}/state", headers=scenario.headers[participant])
+            response = client.get(f"/matches/{scenario.match.id}/state", headers=scenario.headers[participant])
             assert response.status_code == 200
             states.append(response.json())
         assert states[0] == states[1]
@@ -369,7 +369,7 @@ def test_mocked_engine_publishes_match_lifecycle(client, db, match_scenario, sta
 
 
 def test_invalid_match_id_returns_422(client, match_scenario):
-    response = client.get('/api/matches/not-a-uuid/state', headers=match_scenario.headers['home'])
+    response = client.get('/matches/not-a-uuid/state', headers=match_scenario.headers['home'])
     assert response.status_code == 422
 
 

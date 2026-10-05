@@ -1,18 +1,30 @@
-"""Consulta del ultimo estado publicado por el motor."""
-from uuid import UUID
-
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_user
+from app.core.config import get_settings
 from app.db.session import get_db
+from app.services.match_runner import start_match
+from uuid import UUID
+
+from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.schemas.match_state import MatchState
 from app.services.match_state import (
     MatchAccessDenied, MatchNotFound, MatchStateUnavailable, get_match_state,
 )
 
-router = APIRouter(prefix="/api/matches", tags=["matches"])
+
+router = APIRouter(prefix="/matches", tags=["matches"])
+
+@router.post("/{match_id}/start", status_code=202)
+async def start(match_id: str, db: Session = Depends(get_db)):
+    try:
+        start_match(db, match_id, get_settings())
+    except LookupError:
+        raise HTTPException(404, "Partido no existe")
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+    return {"status": "started"} 
 
 
 @router.get(

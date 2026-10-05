@@ -16,7 +16,7 @@ def test_demo_login_and_both_users_see_updates(client, db):
         login = client.post('/api/auth/login', json={'email': email, 'password': PASSWORD})
         assert login.status_code == 200
         headers.append({'Authorization': f"Bearer {login.json()['access_token']}"})
-    path = f'/api/matches/{demo.match_id}/state'
+    path = f'/matches/{demo.match_id}/state'
     initial = client.get(path, headers=headers[0])
     assert initial.status_code == 200
     assert initial.json() == client.get(path, headers=headers[1]).json()
