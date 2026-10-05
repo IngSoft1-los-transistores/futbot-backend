@@ -54,3 +54,6 @@ def create_player(db: Session, club_id: str, player_data: PlayerCreate) -> Playe
     db.commit()
     db.refresh(player)  # pulls DB-generated fields (id, created_at)
     return player
+
+def get_all_players(db: Session, club_id: str):
+    return db.query(Player).filter(Player.club_id == club_id).all()
