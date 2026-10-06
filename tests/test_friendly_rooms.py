@@ -611,11 +611,11 @@ def test_create_friendly_room_integration_success(
     # Formatear payload con titulares y suplentes
     payload = {
         "starters": [
-            {"player_id": str(p.id), "behavior_id": str(comportamiento_prueba.id)}
+            {"player_id": p.name, "behavior_id": str(comportamiento_prueba.id)}
             for p in jugadores[:3]
         ],
         "substitutes": [
-            {"player_id": str(p.id), "behavior_id": str(comportamiento_prueba.id)}
+            {"player_id": p.name, "behavior_id": str(comportamiento_prueba.id)}
             for p in jugadores[3:]
         ],
     }
