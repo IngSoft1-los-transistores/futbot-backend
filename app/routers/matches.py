@@ -10,16 +10,21 @@ from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.schemas.match_state import MatchState
 from app.services.match_state import (
-    MatchAccessDenied, MatchNotFound, MatchStateUnavailable, get_match_state,
+    MatchAccessDenied, MatchNotFound, MatchStateUnavailable, get_match_state, authorize_match,
 )
 
 
 router = APIRouter(prefix="/matches", tags=["matches"])
 
 @router.post("/{match_id}/start", status_code=202)
-async def start(match_id: str, db: Session = Depends(get_db)):
+async def start(match_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     try:
-        start_match(db, match_id, get_settings())
+        authorize_match(db, str(match_id), user)
+        start_match(db, str(match_id), get_settings())
+    except MatchAccessDenied:
+        raise HTTPException(403, "No tenes acceso a este partido")
+    except MatchNotFound:
+        raise HTTPException(404, "Partido no existe")
     except LookupError:
         raise HTTPException(404, "Partido no existe")
     except RuntimeError as e:

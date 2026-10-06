@@ -103,6 +103,18 @@ def start_url(room_id: str) -> str:
 # --- Fixtures ---
 
 
+@pytest.fixture(autouse=True)
+def isolated_motor_behaviors(monkeypatch):
+    # Estos tests usan una DB temporal; no consultar el catálogo global de bots.
+    from app.engine.match_engine import MatchEngine
+
+    async def actions(self):
+        from app.engine.action import NULL_ACTION
+        return {player.id: NULL_ACTION for player in self.state.players}
+
+    monkeypatch.setattr(MatchEngine, '_collect_actions', actions)
+
+
 @pytest.fixture
 def away_club(db: Session) -> Club:
     return create_club(db, "away")
@@ -697,3 +709,100 @@ def test_create_friendly_room_duplicate_players_400(
     response = client.post("/api/friendly/rooms", headers=auth_headers, json=payload)
     assert response.status_code == 400
     assert "mismo jugador" in response.json()["detail"].lower()
+
+def test_start_publishes_initial_state_for_websocket(client, db, club, ready_room, auth_headers):
+    response = client.post(start_url(ready_room.id), headers=auth_headers)
+    assert response.status_code == 200
+    match_id = response.json()['matchId']
+    with client.websocket_connect(f'/api/matches/{match_id}/ws') as socket:
+        socket.send_json({'type': 'auth', 'token': auth_headers['Authorization'].split()[1]})
+        message = socket.receive_json()
+    assert message['type'] == 'state'
+    state = message['state']
+    assert state['match_id'] == match_id
+    assert state['revision'] >= 1
+    assert len(state['players']) == 12
+    assert sum(p['on_field'] for p in state['players']) == 6
+    assert state['ball']['x'] == 0
+    assert state['ball']['y'] == 0
+
+
+def test_runner_publishes_ticks_and_finishes_once(db, club, ready_room, monkeypatch):
+    import asyncio
+    from app.core.config import get_settings
+    from app.engine.live_state import match_states
+    from app.engine.match_engine import MatchEngine
+    from app.engine.schedule import build_schedule
+    from app.engine.state import GoalEvent, Team
+    from app.models.goal import Goal
+    from app.services import match_runner
+    from app.ws.manager import manager
+
+    match = start_friendly_match(db, ready_room.id, club)
+    match.duration_seconds = 4
+    db.commit()
+    original_build = match_runner.build_engine_from_db
+    seen = []
+    monkeypatch.setattr(manager, 'broadcast', lambda state: seen.append(state))
+
+    async def actions(self):
+        # Un gol en el primer tick permite verificar que no se persista de nuevo al finalizar.
+        if not self.state.goals:
+            scorer = next(p for p in self.state.players if p.team == Team.HOME)
+            self.state.goals.append(GoalEvent(Team.HOME, scorer.id, 0))
+            self.state.score[Team.HOME] = 1
+        from app.engine.action import NULL_ACTION
+        return {player.id: NULL_ACTION for player in self.state.players}
+
+    monkeypatch.setattr(MatchEngine, '_collect_actions', actions)
+
+    def fast_engine(*args, **kwargs):
+        engine = original_build(*args, **kwargs)
+        engine.schedule = build_schedule(4, engine.cfg.match_tick_rate, 0, 0)
+        engine.realtime = False
+        return engine
+
+    monkeypatch.setattr(match_runner, 'build_engine_from_db', fast_engine)
+
+    async def play():
+        match_runner.start_match(db, match.id, get_settings())
+        initial = match_states.get(match.id)
+        assert initial.revision == 1
+        assert initial.current_time == 0
+        with pytest.raises(RuntimeError):
+            match_runner.start_match(db, match.id, get_settings())
+        await match_runner._running[match.id]
+        await asyncio.sleep(0)
+        assert match.id not in match_runner._running
+
+    asyncio.run(play())
+    final = match_states.get(match.id)
+    assert final.status == 'finished'
+    assert final.current_time == 4
+    assert final.score.home == 1
+    assert len(seen) > 2
+    assert [s.revision for s in seen] == list(range(1, len(seen) + 1))
+    db.expire_all()
+    assert db.get(Match, match.id).status == MATCH_FINISHED
+    assert db.get(Room, ready_room.id).status == 'finished'
+    assert db.scalar(select(func.count()).select_from(Goal).where(Goal.match_id == match.id)) == 1
+    assert all(not db.get(Player, str(p.player_id)).is_playing for p in final.players)
+
+
+def test_retry_start_requires_membership_and_recovers_unstarted_match(
+    client, db, club, away_club, ready_room, auth_headers,
+):
+    from app.engine.live_state import match_states
+
+    match = start_friendly_match(db, ready_room.id, club)
+    url = f'/matches/{match.id}/start'
+    assert client.post(url).status_code == 401
+    outsider = create_club(db, 'retry-outsider')
+    outsider_session = start_session(db, outsider.user)
+    assert client.post(url, headers={
+        'Authorization': f'Bearer {outsider_session.access_token}',
+    }).status_code == 403
+    assert match_states.get(match.id) is None
+    assert client.post(url, headers=auth_headers).status_code == 202
+    assert match_states.get(match.id) is not None
+    assert client.post(url, headers=auth_headers).status_code == 409

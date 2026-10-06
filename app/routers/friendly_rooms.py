@@ -3,6 +3,8 @@ from pydantic.alias_generators import to_camel
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_club, get_current_user
+from app.core.config import get_settings
+from app.services.match_runner import start_match
 from app.db.session import get_db
 from app.models.club import Club
 from app.models.room import ROOM_STATUS_IN_PROGRESS
@@ -56,12 +58,13 @@ def read_friendly_room(
 
 
 @router.post("/{room_id}/start", response_model=FriendlyRoomStartRead)
-def start_friendly_room(
+async def start_friendly_room(
     room_id: str,
     db: Session = Depends(get_db),
     club: Club = Depends(get_current_club),
 ) -> FriendlyRoomStartRead:
     match = start_friendly_match(db, room_id, club)
+    start_match(db, match.id, get_settings())
     return FriendlyRoomStartRead(
         room_id=room_id, match_id=match.id, status=to_camel(ROOM_STATUS_IN_PROGRESS)
     )

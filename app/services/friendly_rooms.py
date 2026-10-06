@@ -69,16 +69,34 @@ def _invalid_squad() -> HTTPException:
 
 
 def _validate_squads(
-    rows: list[tuple[SquadEntry, Player, Behavior]], club_ids: set[str]
+    db: Session,
+    rows: list[tuple[SquadEntry, Player, Behavior]],
+    club_ids: set[str],
 ) -> None:
     """Each club needs 3 starters and 3 substitutes with usable players and behaviors."""
     roles_per_club: dict[str, Counter] = {club_id: Counter() for club_id in club_ids}
+    player_ids = {player.id for _, player, _ in rows}
+    active_player_ids = set(
+        db.scalars(
+            select(MatchPlayer.player_id)
+            .join(Match, Match.id == MatchPlayer.match_id)
+            .where(
+                MatchPlayer.player_id.in_(player_ids),
+                Match.status.in_(ACTIVE_MATCH_STATES),
+            )
+        )
+    )
 
     for entry, player, behavior in rows:
         if player.club_id not in club_ids:
+            print("este es el problema")
             raise _invalid_squad()
-        if player.deleted_at is not None or player.is_playing:
+        if player.deleted_at is not None or player.id in active_player_ids:
             raise _invalid_squad()
+        # is_playing is a cached flag. Clear stale values left by finished
+        # matches, while active match membership remains authoritative.
+        if player.is_playing:
+            player.is_playing = False
         if behavior.deleted_at is not None or behavior.club_id not in (
             None,
             player.club_id,
@@ -89,10 +107,6 @@ def _validate_squads(
     expected = Counter({ROLE_STARTER: STARTER_COUNT, ROLE_SUBSTITUTE: SUBSTITUTE_COUNT})
     if any(roles != expected for roles in roles_per_club.values()):
         raise _invalid_squad()
-
-
-def _start_simulation(match_id: str) -> None:
-    """Hook for the match engine"""
 
 
 def _get_room_for_member(db: Session, room_id: str, club: Club) -> tuple[Room, set[str]]:
@@ -183,7 +197,7 @@ def start_friendly_match(db: Session, room_id: str, club: Club) -> Match:
         )
 
     rows = _load_squads(db, room.id)
-    _validate_squads(rows, club_ids)
+    _validate_squads(db, rows, club_ids)
 
     home_club_id = room.creator_club_id
     (away_club_id,) = club_ids - {home_club_id}
@@ -228,7 +242,6 @@ def start_friendly_match(db: Session, room_id: str, club: Club) -> Match:
         db.rollback()
         raise _already_started()
 
-    _start_simulation(match.id)
     return match
 
 

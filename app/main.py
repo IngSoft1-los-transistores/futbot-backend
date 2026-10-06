@@ -14,6 +14,8 @@ from app.db.init_db import cargar_comportamientos_por_defecto, crear_tablas
 from app.db.session import SessionLocal, engine
 from app.routers import health, auth, behaviors, friendly_rooms, players, ws, matches
 from app.ws.matches import router as match_stream_router
+from app.services.match_runner import stop_matches
+from app.services.match_recovery import recover_interrupted_friendly_matches
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +29,14 @@ async def lifespan(app: FastAPI):
     try:
         cargar_comportamientos_por_defecto(db)
         precargar_preprogramados(db)
+        recover_interrupted_friendly_matches(db)
     finally:
         db.close()
 
-    yield
+    try:
+        yield
+    finally:
+        await stop_matches()
 
 
 app = FastAPI(title="FutBot API", lifespan=lifespan)
