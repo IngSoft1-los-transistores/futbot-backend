@@ -58,6 +58,7 @@ def client(db: Session) -> Generator[TestClient, None, None]:
 
 # --- Helpers de creacion de datos ---
 
+
 @pytest.fixture
 def user(db: Session) -> User:
     usuario = User(
@@ -176,3 +177,25 @@ def isolated_live_state():
     match_states.clear()
     yield
     match_states.clear()
+
+@pytest.fixture()
+def jugadores_del_club(db: Session, club: Club) -> list[Player]:
+    """
+    Fixture que crea un conjunto de jugadores para el club del usuario de prueba.
+    Retorna la lista de jugadores creados.
+    """
+    jugadores = [
+        Player(
+            club_id=club.id,
+            name=f"Jugador {i + 1}",
+            power=60,
+            agility=60,
+            control=60,
+            speed=60,
+            strength=60,
+        )
+        for i in range(6)
+    ]
+    db.add_all(jugadores)
+    db.commit()
+    return jugadores
