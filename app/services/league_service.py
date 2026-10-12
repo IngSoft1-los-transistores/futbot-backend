@@ -17,7 +17,12 @@ from app.models.room import (
 )
 from app.models.squad_entry import ROLE_STARTER, ROLE_SUBSTITUTE, SquadEntry
 from app.schemas.friendly_room import FriendlyRoomPlayerRead, JoinPlayerSelection
-from app.schemas.league import JoinLeagueRequest, JoinLeagueResponse, LeagueDetailRead
+from app.schemas.league import (
+    JoinLeagueRequest,
+    JoinLeagueResponse,
+    LeagueDetailRead,
+    LeagueSummaryRead,
+)
 from app.services.exceptions_league import (
     AlreadyInLeague,
     InvalidSquadBehaviors,
@@ -193,3 +198,48 @@ def _load_club_squad(db: Session, league_id: str, club_id: str) -> list[Friendly
     # Starters first.
     squad.sort(key=lambda p: p.role != ROLE_STARTER)
     return squad
+
+
+def count_enrolled_clubs(db: Session, league_id: str) -> int:
+    return db.scalar(
+        select(func.count()).select_from(Enrollment).where(Enrollment.room_id == league_id)
+    )
+
+
+def list_open_leagues(db: Session, club: Club) -> list[LeagueSummaryRead]:
+    rooms = db.scalars(
+        select(Room)
+        .where(Room.type == ROOM_TYPE_PUBLIC, Room.status.in_(OPEN_LEAGUE_STATES))
+        .order_by(Room.created_at.desc())
+    ).all()
+    if not rooms:
+        return []
+
+    room_ids = [room.id for room in rooms]
+    enrolled_counts = dict(
+        db.execute(
+            select(Enrollment.room_id, func.count())
+            .where(Enrollment.room_id.in_(room_ids))
+            .group_by(Enrollment.room_id)
+        ).tuples().all()
+    )
+    own_league_ids = set(
+        db.scalars(
+            select(Enrollment.room_id).where(
+                Enrollment.club_id == club.id, Enrollment.room_id.in_(room_ids)
+            )
+        )
+    )
+    return [
+        LeagueSummaryRead(
+            league_id=room.id,
+            name=room.name,
+            status=to_camel(room.status),
+            min_clubs=room.min_clubs,
+            max_clubs=room.max_clubs,
+            enrolled_clubs=enrolled_counts.get(room.id, 0),
+            match_duration_minutes=room.match_duration_minutes,
+            is_enrolled=room.id in own_league_ids,
+        )
+        for room in rooms
+    ]
