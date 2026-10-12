@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.db.base import ahora_utc
 from app.engine.live_state import match_states
 from app.models.goal import Goal
-from app.models.match import ESTADO_IN_PROGRESS, ESTADO_PAUSED, Match
+from app.models.match import ESTADO_PRE_MATCH, ESTADO_IN_PROGRESS, ESTADO_PAUSED, Match
 from app.models.match_player import MatchPlayer
 from app.models.player import Player
 from app.models.room import Room
@@ -88,7 +88,7 @@ def publish_engine_tick(db: Session, match_id: str, tick: MatchTick, *, expected
                         .where(
                             MatchPlayer.player_id == Player.id,
                             MatchPlayer.match_id != match_id,
-                            Match.status.in_((ESTADO_IN_PROGRESS, ESTADO_PAUSED)),
+                            Match.status.in_((ESTADO_PRE_MATCH, ESTADO_IN_PROGRESS, ESTADO_PAUSED)),
                         )
                     )
                     db.execute(
