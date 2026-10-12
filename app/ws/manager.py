@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from threading import RLock
 
 from fastapi import WebSocket
+from pydantic import BaseModel
 
 from app.schemas.match_state import MatchState
 
@@ -118,3 +119,36 @@ class RoomConnectionManager:
 
 
 room_manager = RoomConnectionManager()
+
+
+class LeagueListManager:
+    """Fans league list events out to every open socket; safe to call from sync code."""
+
+    def __init__(self) -> None:
+        # Unbounded on purpose: unlike match snapshots, a dropped list event is lost for good.
+        self._subscribers: dict[asyncio.Queue, asyncio.AbstractEventLoop] = {}
+        self._lock = RLock()
+
+    def subscribe(self) -> asyncio.Queue:
+        queue: asyncio.Queue = asyncio.Queue()
+        with self._lock:
+            self._subscribers[queue] = asyncio.get_running_loop()
+        return queue
+
+    def unsubscribe(self, queue: asyncio.Queue) -> None:
+        with self._lock:
+            self._subscribers.pop(queue, None)
+
+    def broadcast(self, event: str, payload: BaseModel) -> None:
+        message = {"event": event, "payload": payload.model_dump(mode="json", by_alias=True)}
+        with self._lock:
+            subscribers = tuple(self._subscribers.items())
+        for queue, loop in subscribers:
+            try:
+                loop.call_soon_threadsafe(queue.put_nowait, message)
+            except RuntimeError:
+                # The client's loop is already closed.
+                self.unsubscribe(queue)
+
+
+league_list_manager = LeagueListManager()
