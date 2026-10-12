@@ -2,7 +2,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 from app.models.squad_entry import STARTER_COUNT, SUBSTITUTE_COUNT
-from app.schemas.friendly_room import JoinPlayerSelection
+from app.schemas.friendly_room import FriendlyRoomPlayerRead, JoinPlayerSelection
 
 
 class JoinLeagueRequest(BaseModel):
@@ -24,3 +24,19 @@ class JoinLeagueResponse(BaseModel):
     enrollment_id: str
     club_id: str
     league_id: str
+
+
+class LeagueDetailRead(BaseModel):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    league_id: str
+    name: str
+    is_private: bool
+    status: str
+    min_clubs: int
+    max_clubs: int
+    enrolled_clubs: int
+    match_duration_minutes: int
+    is_enrolled: bool
+    # Only the requesting club's squad; None when it is not enrolled.
+    my_squad: list[FriendlyRoomPlayerRead] | None
