@@ -1,4 +1,5 @@
 """Configuracion y fixtures de las pruebas del backend."""
+
 import os
 from collections.abc import Generator
 from datetime import datetime, timedelta, timezone
@@ -174,28 +175,23 @@ def fixed_session_settings(monkeypatch):
 @pytest.fixture(autouse=True)
 def isolated_live_state():
     from app.engine.live_state import match_states
+
     match_states.clear()
     yield
     match_states.clear()
 
-@pytest.fixture()
-def jugadores_del_club(db: Session, club: Club) -> list[Player]:
-    """
-    Fixture que crea un conjunto de jugadores para el club del usuario de prueba.
-    Retorna la lista de jugadores creados.
-    """
-    jugadores = [
-        Player(
-            club_id=club.id,
-            name=f"Jugador {i + 1}",
-            power=60,
-            agility=60,
-            control=60,
-            speed=60,
-            strength=60,
-        )
-        for i in range(6)
-    ]
-    db.add_all(jugadores)
+
+@pytest.fixture
+def club_players(crear_player, club) -> list[Player]:
+    """Crea 6 jugadores del club del usuario de prueba usando la fábrica crear_player."""
+    return [crear_player(club.id, name=f"Player {i + 1}") for i in range(6)]
+
+
+@pytest.fixture
+def other_club(db: Session) -> Club:
+    """Segundo club, con su propio usuario, para probar el aislamiento entre clubes."""
+    other_user = User(username="other", email="other@other.com", password_hash="hash")
+    other_user.club = Club(name="Other Club")
+    db.add(other_user)
     db.commit()
-    return jugadores
+    return other_user.club
