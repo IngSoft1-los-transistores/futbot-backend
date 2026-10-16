@@ -11,6 +11,8 @@ class SquadSelection(BaseModel):
 
 class CreateLeague(BaseModel):
     name: str
+    is_private: bool = False
+    password: str | None = None
     min_clubs: int = Field(gt=0)
     max_clubs: int = Field(gt=0)
     match_duration: int = Field(gt=0)

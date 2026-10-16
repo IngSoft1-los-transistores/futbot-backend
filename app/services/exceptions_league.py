@@ -2,90 +2,94 @@ from app.models.room import MAX_LEAGUE_CLUBS, MIN_LEAGUE_CLUBS
 from app.services.exceptions_player import AppException
 
 
-# Ticket: [BE] Crear Liga
-# Validar que el nombre de la liga no se encuentre utilizado.
-class NombreUnicoInvalido(AppException):
-    def __init__(self, nombre: str):
-        self.nombre = nombre
+# Ticket: [BE] Create League
+# Ya existe una liga con ese nombre (sin distinguir mayúsculas).
+class DuplicateLeagueName(AppException):
+    def __init__(self, name: str):
+        self.name = name
 
         super().__init__(
-            message=f"El nombre {nombre} ya existe, elija otro",
-            code="NOMBRE_LIGA_EXISTENTE",
+            message=f"A league named '{name}' already exists. Choose another name.",
+            code="DUPLICATE_LEAGUE_NAME",
         )
 
-
-# Validar que la cantidad minima de clubes sea al menos 3 clubes.
-class MinimoClubsInvalido(AppException):
+# El mínimo de clubes es menor al permitido (3).
+class MinClubsTooLow(AppException):
     def __init__(self, min_clubs: int):
         self.min_clubs = min_clubs
         self.min = MIN_LEAGUE_CLUBS
 
         super().__init__(
-            message=f"La liga debe tener al menos {self.min} clubes.",
-            code="MINIMO_CLUBES_EN_LIGA",
+            message=f"A league must have at least {self.min} clubs.",
+            code="MIN_CLUBS_TOO_LOW",
         )
 
-
-# Validar que la cantidad máxima de clubes sea a lo sumo 30.
-class MaximosClubsInvalido(AppException):
+# El máximo de clubes supera el permitido (30).
+class MaxClubsTooHigh(AppException):
     def __init__(self, max_clubs: int):
         self.max_clubs = max_clubs
         self.max = MAX_LEAGUE_CLUBS
+
         super().__init__(
-            message=f"La liga debe tener maximo {self.max} clubes.",
-            code="MAXIMO_CLUBES_EN_LIGA",
+            message=f"A league can have at most {self.max} clubs.",
+            code="MAX_CLUBS_TOO_HIGH",
         )
 
-
-# Validar que la cantidad máxima de clubes sea válida respecto de la mínima.
-class MaximosRespectoMinimosClubs(AppException):
+# El máximo de clubes es menor que el mínimo.
+class MaxClubsBelowMin(AppException):
     def __init__(self, max_clubs: int, min_clubs: int):
         self.max_clubs = max_clubs
         self.min_clubs = min_clubs
+
         super().__init__(
-            message="La cantidad de clubes maximos respecto a los minimos es inconsistente.",
-            code="MAXIMOS_INCONSISTENTE_RESPECTO_DE_MINIMOS",
+            message="The maximum number of clubs cannot be lower than the minimum.",
+            code="MAX_CLUBS_BELOW_MIN",
         )
 
-## Valida si el jugador es unico en el club
-class JugadorRepetido(AppException):
-    def __init__(self, player_id: str):
-        self.player_id = player_id
+# El mismo jugador aparece más de una vez en la escuadra.
+class DuplicatePlayer(AppException):
+    def __init__(self, player_name: str):
+        self.player_name = player_name
 
         super().__init__(
-            message=f"El jugador con id:{player_id} no puede repetirse",
-            code="JUGADOR_REPETIDO",
+            message=f"Player '{player_name}' cannot appear more than once in the squad.",
+            code="DUPLICATE_PLAYER",
         )
 
+# No hay un jugador con ese nombre en el club creador.
+class PlayerNotFound(AppException):
+    def __init__(self, player_name: str):
+        self.player_name = player_name
 
-## Valida si el jugador existe en el club
-class JugadorNoExiste(AppException):
-    def __init__(self, player_id: str):
-        self.player_id = player_id
-        super().__init__(message="El jugador no existe", code="JUGADOR_INEXISTENTE")
-
-
-## Valida si el jugador existe en el club
-class JugadorNoPerteneceAlClub(AppException):
-    def __init__(
-        self, club_id: str, nombre_club: str, player_id: str, nombre_player: str
-    ):
-        self.club_id = club_id
-        self.nombre_club = nombre_club
-        self.player_id = player_id
-        self.nombre_player = nombre_player
         super().__init__(
-            message=f"El jugador {nombre_player} con id:{player_id} no pertenece al club {nombre_club} con id:{club_id}",
-            code="JUGADOR_PERTENECE_A_OTRO_CLUB",
+            message=f"Player '{player_name}' does not exist in your club.",
+            code="PLAYER_NOT_FOUND",
         )
 
-
-# Validar los comportamientos asignados a cada jugador.
-class ComportamientoInvalido(AppException):
-    def __init__(self, comportamiento_id: str):
-        self.comportamiento_id = comportamiento_id
+# El comportamiento asignado no existe.
+class InvalidBehavior(AppException):
+    def __init__(self, behavior_id: str):
+        self.behavior_id = behavior_id
 
         super().__init__(
-            message=f"El comportamiento con id:{comportamiento_id} es invalido",
-            code="COMPORTAMIENTO_INVALIDO",
+            message=f"Behavior with id:{behavior_id} is invalid.",
+            code="INVALID_BEHAVIOR",
+        )
+
+# La contraseña de una liga privada es inválida (falta, es corta o tiene espacios).
+class InvalidLeaguePassword(AppException):
+    def __init__(self, reason: str):
+        self.reason = reason
+
+        super().__init__(
+            message=f"Invalid league password: {reason}.",
+            code="INVALID_LEAGUE_PASSWORD",
+        )
+
+# Una liga pública no puede tener contraseña.
+class PasswordNotAllowedOnPublicLeague(AppException):
+    def __init__(self):
+        super().__init__(
+            message="A public league cannot have a password.",
+            code="PASSWORD_NOT_ALLOWED_ON_PUBLIC_LEAGUE",
         )

@@ -4,95 +4,95 @@ from collections import Counter
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.security import hash_password
 from app.models.behavior import Behavior
 from app.models.club import Club
 from app.models.enrollment import Enrollment
 from app.models.player import Player
-from app.models.room import MAX_LEAGUE_CLUBS, MIN_LEAGUE_CLUBS, ROOM_TYPE_PUBLIC, Room
+from app.models.room import (
+    MAX_LEAGUE_CLUBS,
+    MIN_LEAGUE_CLUBS,
+    ROOM_TYPE_PRIVATE,
+    ROOM_TYPE_PUBLIC,
+    Room,
+)
 from app.models.squad_entry import ROLE_STARTER, ROLE_SUBSTITUTE, SquadEntry
 from app.schemas.league import CreateLeague, LeagueResponse
 from app.services.exceptions_league import (
-    ComportamientoInvalido,
-    JugadorNoExiste,
-    JugadorNoPerteneceAlClub,
-    JugadorRepetido,
-    MaximosClubsInvalido,
-    MaximosRespectoMinimosClubs,
-    MinimoClubsInvalido,
-    NombreUnicoInvalido,
+    DuplicateLeagueName,
+    DuplicatePlayer,
+    InvalidBehavior,
+    InvalidLeaguePassword,
+    MaxClubsBelowMin,
+    MaxClubsTooHigh,
+    MinClubsTooLow,
+    PasswordNotAllowedOnPublicLeague,
+    PlayerNotFound,
 )
 
+MIN_LEAGUE_PASSWORD_LENGTH = 6
+MAX_LEAGUE_PASSWORD_BYTES = 72  # límite de bcrypt
+CODE_GENERATION_ATTEMPTS = 10
 
-def create_league(db: Session, datos: CreateLeague, club_creador: Club) -> LeagueResponse:
+
+# Crea la liga, inscribe al club creador con su escuadra y devuelve la respuesta.
+# Todo se guarda en una sola transacción: si algo falla, no queda nada a medias.
+def create_league(db: Session, data: CreateLeague, creator_club: Club) -> LeagueResponse:
     try:
-        _validar_nombre_unico(db, datos.name)
-        _validar_cantidad_clubs(datos.min_clubs, datos.max_clubs)
+        # Primero las validaciones que no consultan la BD, después las que sí.
+        _validate_club_limits(data.min_clubs, data.max_clubs)
+        _validate_privacy(data.is_private, data.password)
+        _validate_unique_name(db, data.name)
+        players_by_name = _validate_squad(db, creator_club, data.starters, data.substitutes)
+        behaviors = _validate_behaviors(db, data.starters, data.substitutes)
 
-        # 2. Guardar los resultados de las validaciones.
-        jugadores = _validar_escuadra(
-            db,
-            club_creador,
-            datos.starters,
-            datos.substitutes,
-        )
+        # Una liga privada guarda el hash de la contraseña; una pública, None.
+        password_hash = hash_password(data.password) if data.is_private else None
 
-        comportamientos = _validar_comportamientos(db, datos.starters, datos.substitutes)
-
-        # Crear la liga.
-        codigo = _generar_codigo_unico(db)
-
-        #Crear la liga y el enrollment del club creador.
         room = Room(
-            name=datos.name,
-            min_clubs=datos.min_clubs,
-            max_clubs=datos.max_clubs,
-            match_duration_minutes=datos.match_duration,
-            type=ROOM_TYPE_PUBLIC,
-            code=codigo,
-            creator_club_id=club_creador.id,
+            name=data.name,
+            type=ROOM_TYPE_PRIVATE if data.is_private else ROOM_TYPE_PUBLIC,
+            password_hash=password_hash,
+            min_clubs=data.min_clubs,
+            max_clubs=data.max_clubs,
+            match_duration_minutes=data.match_duration,
+            code=_generate_unique_code(db),
+            creator_club_id=creator_club.id,
         )
         db.add(room)
-        db.flush() # Flush para obtener el ID de la liga recién creada antes de crear el enrollment y las entradas del escuadra.
+        # Flush para obtener room.id antes de crear el enrollment y la escuadra.
+        db.flush()
 
-        enrollment = Enrollment(
-            room_id=room.id,
-            club_id=club_creador.id,
-        )
-        db.add(enrollment)
+        db.add(Enrollment(room_id=room.id, club_id=creator_club.id))
 
-        # Crear las entradas usando los objetos validados.
-        jugadores_por_id = {j.id: j for j in jugadores}
-        comportamientos_por_id = {b.id: b for b in comportamientos}
+        behaviors_by_id = {b.id: b for b in behaviors}
 
         squad_entries = []
-
-        for starter in datos.starters:
+        for selection in data.starters:
             squad_entries.append(
                 SquadEntry(
                     room_id=room.id,
-                    player_id=jugadores_por_id[starter.player_id].id,
-                    behavior_id=comportamientos_por_id[starter.behavior_id].id,
+                    player_id=players_by_name[selection.player_id].id,
+                    behavior_id=behaviors_by_id[selection.behavior_id].id,
                     role=ROLE_STARTER,
                 )
             )
-
-        for substitute in datos.substitutes:
+        for selection in data.substitutes:
             squad_entries.append(
                 SquadEntry(
                     room_id=room.id,
-                    player_id=jugadores_por_id[substitute.player_id].id,
-                    behavior_id=comportamientos_por_id[substitute.behavior_id].id,
+                    player_id=players_by_name[selection.player_id].id,
+                    behavior_id=behaviors_by_id[selection.behavior_id].id,
                     role=ROLE_SUBSTITUTE,
                 )
             )
-
         db.add_all(squad_entries)
         db.flush()
 
         response = LeagueResponse(
             id=room.id,
             name=room.name,
-            is_private=False,
+            is_private=room.type == ROOM_TYPE_PRIVATE,
             started=False,
             creator_id=room.creator_club_id,
             code_to_join=room.code,
@@ -100,84 +100,93 @@ def create_league(db: Session, datos: CreateLeague, club_creador: Club) -> Leagu
 
         db.commit()
         return response
-    # Si ocurre cualquier excepción, hacemos rollback de la transacción y propagamos la excepción.
+    # Ante cualquier error se revierte toda la transacción y se propaga.
     except Exception:
         db.rollback()
         raise
 
 
-def _validar_nombre_unico(db: Session, name: str) -> None:
+# Falla si ya existe una liga con ese nombre (sin distinguir mayúsculas).
+def _validate_unique_name(db: Session, name: str) -> None:
     room = db.scalar(select(Room).where(func.lower(Room.name) == name.lower()))
-
     if room is not None:
-        raise NombreUnicoInvalido(name)
+        raise DuplicateLeagueName(name)
 
 
-def _validar_cantidad_clubs(min_clubs: int, max_clubs: int) -> None:
+# Falla si el mínimo o el máximo de clubes están fuera de rango o son inconsistentes.
+def _validate_club_limits(min_clubs: int, max_clubs: int) -> None:
     if min_clubs < MIN_LEAGUE_CLUBS:
-        raise MinimoClubsInvalido(min_clubs)
-
+        raise MinClubsTooLow(min_clubs)
     if max_clubs > MAX_LEAGUE_CLUBS:
-        raise MaximosClubsInvalido(max_clubs)
-
+        raise MaxClubsTooHigh(max_clubs)
     if max_clubs < min_clubs:
-        raise MaximosRespectoMinimosClubs(max_clubs, min_clubs)
+        raise MaxClubsBelowMin(max_clubs, min_clubs)
 
 
-def _validar_escuadra(db, club_creador, starters, substitutes):
-    todos = starters + substitutes
-    player_ids = [s.player_id for s in todos]
+# Resuelve los jugadores por nombre dentro del club creador.
+# Devuelve un dict nombre -> Player para crear la escuadra sin volver a consultar.
+def _validate_squad(db: Session, creator_club: Club, starters, substitutes) -> dict[str, Player]:
+    player_names = [s.player_id for s in starters + substitutes]
 
-    conteo = Counter(player_ids)
-    for player_id, cantidad in conteo.items():
-        if cantidad > 1:
-            raise JugadorRepetido(str(player_id))
-    # Validar que todos los jugadores existan y pertenezcan al club creador.
-    jugadores = db.scalars(select(Player).where(Player.id.in_(player_ids))).all()
-    ids_encontrados = {j.id for j in jugadores}
-    ids_faltantes = set(player_ids) - ids_encontrados
+    for name, count in Counter(player_names).items():
+        if count > 1:
+            raise DuplicatePlayer(name)
 
-    if ids_faltantes:
-        primer_faltante = next(iter(ids_faltantes))
-        raise JugadorNoExiste(str(primer_faltante))
-
-    for jugador in jugadores:
-        if jugador.club_id != club_creador.id:
-            raise JugadorNoPerteneceAlClub(
-                club_id=club_creador.id,
-                nombre_club=club_creador.name,
-                player_id=jugador.id,
-                nombre_player=jugador.name,
-            )
-
-    return jugadores
-
-
-def _validar_comportamientos(db, starters, substitutes):
-    todos = starters + substitutes
-    behavior_ids = [s.behavior_id for s in todos]
-
-    comportamientos_validos = db.scalars(
-        select(Behavior).where(Behavior.id.in_(behavior_ids))
+    # Una sola consulta, filtrando por club y excluyendo los borrados lógicamente.
+    players = db.scalars(
+        select(Player).where(
+            Player.club_id == creator_club.id,
+            Player.deleted_at.is_(None),
+            Player.name.in_(player_names),
+        )
     ).all()
+    players_by_name = {p.name: p for p in players}
 
-    comportamientos_validos_ids = {b.id for b in comportamientos_validos}
+    # Se reporta el primero en orden del payload.
+    for name in player_names:
+        if name not in players_by_name:
+            raise PlayerNotFound(name)
 
-    comportamientos_invalidos = set(behavior_ids) - comportamientos_validos_ids
-
-    if comportamientos_invalidos:
-        primer_invalido = next(iter(comportamientos_invalidos))
-        raise ComportamientoInvalido(str(primer_invalido))
-
-    return comportamientos_validos
+    return players_by_name
 
 
-def _generar_codigo_unico(db: Session) -> str:
-    for _ in range(10):
-        codigo = secrets.token_hex(4) # Genera un código hexadecimal de 8 caracteres para la liga.
-        existe = db.scalar(select(Room).where(Room.code == codigo))
-        # Si no existe ninguna liga con ese codigo, lo devolvemos.
-        if existe is None:
-            return codigo
+# Valida que todos los comportamientos asignados existan.
+# Devuelve los comportamientos ya consultados para reutilizarlos.
+def _validate_behaviors(db: Session, starters, substitutes):
+    behavior_ids = [s.behavior_id for s in starters + substitutes]
 
-    raise RuntimeError("No se pudo generar un código único para la liga.")
+    behaviors = db.scalars(select(Behavior).where(Behavior.id.in_(behavior_ids))).all()
+    invalid_ids = set(behavior_ids) - {b.id for b in behaviors}
+    if invalid_ids:
+        raise InvalidBehavior(str(next(iter(invalid_ids))))
+
+    return behaviors
+
+
+# Genera un código hexadecimal de 8 caracteres que no exista en otra sala.
+def _generate_unique_code(db: Session) -> str:
+    for _ in range(CODE_GENERATION_ATTEMPTS):
+        code = secrets.token_hex(4)
+        if db.scalar(select(Room).where(Room.code == code)) is None:
+            return code
+
+    raise RuntimeError("Could not generate a unique code for the league.")
+
+
+# Valida la combinación is_private/password, antes de hashear.
+def _validate_privacy(is_private: bool, password: str | None) -> None:
+    if not is_private:
+        if password:
+            raise PasswordNotAllowedOnPublicLeague()
+        return
+
+    if not password:
+        raise InvalidLeaguePassword("a password is required for private leagues")
+    if len(password) < MIN_LEAGUE_PASSWORD_LENGTH:
+        raise InvalidLeaguePassword(
+            f"it must have at least {MIN_LEAGUE_PASSWORD_LENGTH} characters"
+        )
+    if len(password.encode("utf-8")) > MAX_LEAGUE_PASSWORD_BYTES:
+        raise InvalidLeaguePassword(f"it cannot exceed {MAX_LEAGUE_PASSWORD_BYTES} bytes")
+    if any(char.isspace() for char in password):
+        raise InvalidLeaguePassword("it cannot contain spaces")
