@@ -4,6 +4,8 @@ import random
 import time
 from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Awaitable, Callable
+from app.engine.collisions import resolve_player_collisions
+from app.engine.constants import PLAYER_RADIUS
 
 from app.engine.action import NULL_ACTION, Action
 from app.engine.tick_context import TickContext
@@ -132,6 +134,12 @@ class MatchEngine:
             else:
                 p.vel = Vec2()
 
+        # 2b. Colisiones entre jugadores
+        resolve_player_collisions(s.players, self.field, PLAYER_RADIUS)
+
+        # La pelota acompaña a su dueño antes de patear
+        owner = players.get(s.ball.owner_id)
+        
         # La pelota acompaña a su dueño antes de patear
         owner = players.get(s.ball.owner_id)
         if owner is not None:

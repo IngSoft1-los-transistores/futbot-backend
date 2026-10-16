@@ -148,7 +148,7 @@ class PlayerState:
 class BallState:
     pos: Vec2
     vel: Vec2 = field(default_factory=Vec2)
-    owner_id: int | None = None   # quién la controla, None si está libre
+    owner_id: str | None = None   # quién la controla, None si está libre
     last_kicker_id: str | None = None
     cooldown_ticks: int = 0  
     

@@ -6,7 +6,7 @@ ATTR_NAMES = ("speed", "control", "strength", "power", "agility")
 # Geometría (metros)
 BALL_RADIUS = 0.11        # pelota reglamentaria ~22 cm de diámetro
 PLAYER_RADIUS = 0.5       # radio de colisión/control de un jugador
-CONTROL_RADIUS = 1.0      # distancia centro a centro para controlar la pelota
+CONTROL_RADIUS = 1.2      # distancia centro a centro para controlar la pelota
 
 # Velocidad (m/s)
 PLAYER_MAX_SPEED = 8.0    # tope absoluto de un jugador
