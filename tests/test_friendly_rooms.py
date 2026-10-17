@@ -81,6 +81,26 @@ def add_squad(
     db.commit()
     return players
 
+def add_existing_squad(
+    db: Session,
+    room: Room,
+    club: Club,
+    behavior: Behavior,
+    players: list[Player],
+) -> None:
+    db.add(Enrollment(room_id=room.id, club_id=club.id))
+
+    for index, player in enumerate(players):
+        db.add(
+            SquadEntry(
+                room_id=room.id,
+                player_id=player.id,
+                behavior_id=behavior.id,
+                role=ROLE_STARTER if index < 3 else ROLE_SUBSTITUTE,
+            )
+        )
+
+    db.commit()
 
 def create_friendly_room(db: Session, creator: Club, room_status: str) -> Room:
     room = Room(
@@ -430,7 +450,7 @@ def test_a_squad_with_a_player_from_a_third_club_is_invalid(
     assert_invalid_squad_without_side_effects(client, ready_room, db)
 
 
-def test_a_squad_with_a_player_already_playing_is_invalid(
+def test_a_squad_with_a_player_already_playing_is_valid(
     client: TestClient, login_as, club: Club, ready_room: Room, db: Session
 ) -> None:
     player = db.scalars(select(Player).where(Player.club_id == club.id)).first()
@@ -438,7 +458,7 @@ def test_a_squad_with_a_player_already_playing_is_invalid(
     db.commit()
     login_as(club)
 
-    assert_error(client.post(start_url(ready_room.id)), 400, "INVALID_SQUAD")
+    assert(client.post(start_url(ready_room.id)).status_code == 200)
 
 
 def test_a_squad_with_another_clubs_behavior_is_invalid(
@@ -587,7 +607,72 @@ def test_read_a_room_of_another_club_is_forbidden(
 
 
 # --- POST /api/friendly/rooms ---
+def test_create_two_friendly_room_with_same_players(
+        client: TestClient, 
+        club: Club, 
+        db: Session, 
+        auth_headers: dict[str, str],
+        crear_player, 
+        comportamiento_prueba):
+    """
+    Se puede crear dos salas amistosas con los mismos jugadores.
+    """
+    # Crear 6 jugadores para el club usando fixture
+    
+    jugadores = [crear_player(club.id, name=f"Jugador {i}") for i in range(1,7)]
 
+    # Formatear payload con titulares y suplentes
+    payload = {
+            "starters": [
+                {"player_id": p.name, "behavior_id": str(comportamiento_prueba.id)}
+                for p in jugadores[:3]
+            ],
+            "substitutes": [
+                {"player_id": p.name, "behavior_id": str(comportamiento_prueba.id)}
+                for p in jugadores[3:]
+            ],
+        }
+    # Peticion HTTP autenticada
+    response1 = client.post("/api/friendly/rooms", headers=auth_headers, json=payload)
+    assert response1.status_code == 201
+
+    # Intentar crear otra sala con los mismos jugadores
+    response2 = client.post("/api/friendly/rooms", headers=auth_headers, json=payload)
+    assert response2.status_code == 201
+    assert response1.json()["room_id"] != response2.json()["room_id"]
+
+def test_a_player_can_play_in_two_active_friendly_matches(
+        client: TestClient,
+        login_as,
+        db: Session,
+        club: Club,
+        away_club: Club,
+        ready_room: Room,
+        crear_player,
+        default_behavior: Behavior
+):
+    """
+    Un jugador puede estar en dos partidos amistosos activos al mismo tiempo.
+    """
+    home_players = db.scalars(
+        select(Player)
+        .where(Player.club_id == club.id)
+        .order_by(Player.id)
+    ).all()
+    assert len(home_players) == 6
+    # Creo al segundo rival
+    second_away_club = create_club(db, "second_away")
+    second_room = create_friendly_room(db, club, ROOM_STATUS_READY_TO_START)
+    add_existing_squad(db, second_room, club, default_behavior, home_players)
+    add_squad(db, second_room, second_away_club, default_behavior, crear_player)
+
+    login_as(club)
+    # Inicio el primer partido
+    response1 = client.post(start_url(ready_room.id))
+    assert response1.status_code == 200
+    # Inicio el segundo partido
+    response2 = client.post(start_url(second_room.id))
+    assert response2.status_code == 200
 
 def test_create_friendly_room_unauthorized_without_token(client: TestClient):
     """
