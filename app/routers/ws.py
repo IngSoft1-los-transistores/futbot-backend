@@ -129,60 +129,63 @@ async def league_waiting_room_ws(websocket: WebSocket,
             action = data.get("action")
 
             # Acciones del creador, hay validar que el usuario sea creador
-            # Se da inicio
-            if action == "start_league":
-                
-                # Aca la validacion
-                if club_id != room.creator_club_id:
-                    await websocket.send_json({
-                        "type": "error", 
-                        "message": "Solo el creador puede dar inicio a la liga."
-                    })
-                    continue
+            if action in ["start_league", "cancel_league"]:
+                bind = db.get_bind()
+                with Session(bind) as action_db:
+                    current_room = action_db.query(Room).filter(Room.id == league_id).first()
 
-                # Validar numero de participantes
-                current_participants = league_manager.get_rooms_user_count(league_id)
-                if current_participants < room.min_clubs:
-                    await websocket.send_json({
-                        "type": "error",
-                        "message": f"Se requiere al menos {room.min_clubs} clubes para iniciar la liga."
-                    })
-                    continue
+                    # Validar existencia de liga
+                    if not current_room:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "Liga inexistente"
+                        })
+                        continue
 
-                # Marcar la sala como iniciada en BD
-                room.status = ROOM_STATUS_IN_PROGRESS
-                db.commit()
+                    # Validar que el usuario sea creador
+                    if club_id != current_room.creator_club_id:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "Solo el creador puede realizar esta accion."
+                        })
+                        continue
 
-                # Avisar a todos los usuarios de la redireccion
-                await league_manager.broadcast_waiting(league_id, {
-                    "type": "league_started",
-                    "status": "started",
-                    "redirect_url": f"/league/{league_id}/active" # Ruta del frontend, placeholder?
-                })
-            
-            # Se cancela la liga
-            elif action == "cancel_league":
-                # Validar id de creador otra vez
-                if club_id != room.creator_club_id:
-                    await websocket.send_json({
-                        "type": "error",
-                        "message": "Solo el creador puede cancelar una liga."
-                    })
-                    continue
+                    # Inicio de liga
+                    if action == "start_league":
+                        current_participants = league_manager.get_rooms_user_count(league_id)
+                        if current_participants < current_room.min_clubs:
+                            await websocket.send_json({
+                                "type": "error",
+                                "message": f"Se requiere al menos {current_room.min_clubs} clubes para iniciar."
+                            })
+                            continue
 
-                # Marcar la sala como cancelada en BD
-                room.status = ROOM_STATUS_CANCELLED
-                db.commit()
+                        # Marcar la sala como iniciada en DB
+                        current_room.status = ROOM_STATUS_IN_PROGRESS
+                        action_db.commit()
 
-                # Avisar a todos los usuarios de la redireccion
-                await league_manager.broadcast_waiting(league_id, {
-                    "type": "league_cancelled",
-                    "redirect_url": "/home" # Ruta al homepage
-                })
+                        # Avisar a los usuarios de la redireccion
+                        await league_manager.broadcast_waiting(league_id, {
+                            "type": "league_started",
+                            "redirect_url": f"/league/{league_id}/active"
+                        })
+
+                    # Cancelacion de liga
+                    elif action == "cancel_league":
+                        # Marcar la liga como cancelada en DB
+                        current_room.status = ROOM_STATUS_CANCELLED
+                        action_db.commit()
+
+                        # Avisar a todos los usuarios de la redireccion a homepage
+                        await league_manager.broadcast_waiting(league_id, {
+                            "type": "league_cancelled",
+                            "redirect_url": "/home"
+                        })
+
     except WebSocketDisconnect:
         league_manager.disconnect_waiting(league_id, club_id)
         
-        # Avisar a todods los usuarios de la desconexion
+        # Avisar a todos los usuarios de la desconexion
         await league_manager.broadcast_waiting(league_id, {
             "type": "club_left_waiting",
             "club_id": club_id,
