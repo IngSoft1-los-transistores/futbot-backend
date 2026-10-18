@@ -5,6 +5,7 @@ from app.models.enrollment import Enrollment
 from app.models.room import (
     Room,
     ROOM_TYPE_PUBLIC,
+    ROOM_TYPE_PRIVATE,
     ROOM_STATUS_CANCELLED,
     ROOM_STATUS_IN_PROGRESS,
     ROOM_STATUS_FINISHED,
@@ -13,11 +14,9 @@ from app.schemas.league import LeagueResponse
 
 STARTED_STATUSES = (ROOM_STATUS_IN_PROGRESS, ROOM_STATUS_FINISHED)
 
-
-def like_pattern(text: str) -> str:
-    """Arma un patron 'contiene' tratando %, _ y \\ como texto normal."""
-    escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    return f"%{escaped}%"
+def fold(text: str) -> str:
+    """normaliza para comparar sin distinguir mayusculas"""
+    return text.casefold()
 
 
 class LeagueService:
@@ -36,15 +35,16 @@ class LeagueService:
             select(Room, func.coalesce(counts.c.total, 0))
             .outerjoin(counts, counts.c.room_id == Room.id)      # una liga sin inscriptos cuenta 0
             .where(
-                Room.type == ROOM_TYPE_PUBLIC,
+                Room.type.in_([ROOM_TYPE_PUBLIC, ROOM_TYPE_PRIVATE]),
                 Room.status != ROOM_STATUS_CANCELLED,
             )
-            .order_by(Room.name, Room.id)
         )
+        rows = [(room, total) for room, total in self.db.execute(query).all()]
 
-        clean_name = (name or "").strip()
-        if clean_name:
-            query = query.where(Room.name.ilike(like_pattern(clean_name), escape="\\"))
+        needle = fold((name or "").strip())
+        if needle:
+            rows = [(room, total) for room, total in rows if needle in fold(room.name or "")]
+        rows.sort(key=lambda row: (fold(row[0].name or ""), row[0].id))
 
         return [
             LeagueResponse(
@@ -52,7 +52,7 @@ class LeagueService:
                 name=room.name,
                 participants_count=total,
                 started=room.status in STARTED_STATUSES,
-                is_private=False,
+                is_private=room.type == ROOM_TYPE_PRIVATE,
             )
-            for room, total in self.db.execute(query).all()
+            for room, total in rows
         ]
