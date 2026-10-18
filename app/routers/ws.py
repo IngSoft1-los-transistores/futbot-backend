@@ -152,7 +152,8 @@ async def league_waiting_room_ws(websocket: WebSocket,
 
                     # Inicio de liga
                     if action == "start_league":
-                        current_participants = league_manager.get_rooms_user_count(league_id)
+                        # Validar numero de participantes desde la DB
+                        current_participants = action_db.query(Enrollment).filter(Enrollment.room_id == league_id).count()
                         if current_participants < current_room.min_clubs:
                             await websocket.send_json({
                                 "type": "error",
