@@ -16,7 +16,7 @@ from app.routers import health, auth, behaviors, friendly_rooms, players, ws, ma
 from app.ws.matches import router as match_stream_router
 from app.services.match_runner import stop_matches
 from app.services.match_recovery import recover_interrupted_friendly_matches
-
+from app.routers import leagues 
 logger = logging.getLogger(__name__)
 
 
