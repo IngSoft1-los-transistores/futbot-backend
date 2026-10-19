@@ -12,12 +12,15 @@ from app.models.player import Player
 from app.models.room import (
     MAX_LEAGUE_CLUBS,
     MIN_LEAGUE_CLUBS,
-    ROOM_TYPE_PRIVATE,
-    ROOM_TYPE_PUBLIC,
     Room,
+    ROOM_TYPE_PUBLIC,
+    ROOM_TYPE_PRIVATE,
+    ROOM_STATUS_CANCELLED,
+    ROOM_STATUS_IN_PROGRESS,
+    ROOM_STATUS_FINISHED,
 )
 from app.models.squad_entry import ROLE_STARTER, ROLE_SUBSTITUTE, SquadEntry
-from app.schemas.league import CreateLeague, LeagueResponse
+from app.schemas.league import LeagueResponse, ListLeagueResponse, CreateLeague
 from app.services.exceptions_league import (
     DuplicateLeagueName,
     DuplicatePlayer,
@@ -29,6 +32,52 @@ from app.services.exceptions_league import (
     PasswordNotAllowedOnPublicLeague,
     PlayerNotFound,
 )
+
+STARTED_STATUSES = (ROOM_STATUS_IN_PROGRESS, ROOM_STATUS_FINISHED)
+
+def fold(text: str) -> str:
+    """normaliza para comparar sin distinguir mayusculas"""
+    return text.casefold()
+
+
+class LeagueService:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def list_leagues(self, name: str | None = None) -> list[ListLeagueResponse]:
+        # Cantidad de clubes inscriptos por sala
+        counts = (
+            select(Enrollment.room_id.label("room_id"), func.count(Enrollment.club_id).label("total"))
+            .group_by(Enrollment.room_id)
+            .subquery()
+        )
+
+        query = (
+            select(Room, func.coalesce(counts.c.total, 0))
+            .outerjoin(counts, counts.c.room_id == Room.id)      # una liga sin inscriptos cuenta 0
+            .where(
+                Room.type.in_([ROOM_TYPE_PUBLIC, ROOM_TYPE_PRIVATE]),
+                Room.status != ROOM_STATUS_CANCELLED,
+            )
+        )
+        rows = [(room, total) for room, total in self.db.execute(query).all()]
+
+        needle = fold((name or "").strip())
+        if needle:
+            rows = [(room, total) for room, total in rows if needle in fold(room.name or "")]
+        rows.sort(key=lambda row: (fold(row[0].name or ""), row[0].id))
+
+        return [
+            ListLeagueResponse(
+                id=room.id,
+                name=room.name,
+                participants_count=total,
+                started=room.status in STARTED_STATUSES,
+                is_private=room.type == ROOM_TYPE_PRIVATE,
+            )
+            for room, total in rows
+        ]
+
 
 MIN_LEAGUE_PASSWORD_LENGTH = 6
 MAX_LEAGUE_PASSWORD_BYTES = 72  # límite de bcrypt

@@ -1,8 +1,6 @@
-
 from pydantic import BaseModel, ConfigDict, Field
-
+from pydantic.alias_generators import to_camel
 from app.models.squad_entry import STARTER_COUNT, SUBSTITUTE_COUNT
-
 
 class SquadSelection(BaseModel):
     player_id: str
@@ -32,3 +30,13 @@ class LeagueResponse(BaseModel):
     started: bool
     creator_id: str
     code_to_join: str
+
+
+class ListLeagueResponse(BaseModel):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    id: str
+    name: str
+    participants_count: int
+    started: bool
+    is_private: bool
