@@ -1,4 +1,5 @@
 """Configuracion y fixtures de las pruebas del backend."""
+
 import os
 from collections.abc import Generator
 from datetime import datetime, timedelta, timezone
@@ -57,6 +58,7 @@ def client(db: Session) -> Generator[TestClient, None, None]:
 
 
 # --- Helpers de creacion de datos ---
+
 
 @pytest.fixture
 def user(db: Session) -> User:
@@ -173,6 +175,23 @@ def fixed_session_settings(monkeypatch):
 @pytest.fixture(autouse=True)
 def isolated_live_state():
     from app.engine.live_state import match_states
+
     match_states.clear()
     yield
     match_states.clear()
+
+
+@pytest.fixture
+def club_players(crear_player, club) -> list[Player]:
+    """Crea 6 jugadores del club del usuario de prueba usando la fábrica crear_player."""
+    return [crear_player(club.id, name=f"Player {i + 1}") for i in range(6)]
+
+
+@pytest.fixture
+def other_club(db: Session) -> Club:
+    """Segundo club, con su propio usuario, para probar el aislamiento entre clubes."""
+    other_user = User(username="other", email="other@other.com", password_hash="hash")
+    other_user.club = Club(name="Other Club")
+    db.add(other_user)
+    db.commit()
+    return other_user.club
