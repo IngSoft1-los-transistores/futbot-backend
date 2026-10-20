@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic.alias_generators import to_camel
+from sqlalchemy import null
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_club, get_current_user
@@ -91,9 +92,12 @@ async def join_friendly_room(
         )
     service = FriendlyService(db)
     result = service.join_room(club_id=current_user.club.id, room_id=room_id, request=payload)
+ 
+    club = current_user.club
+    room = get_friendly_room(db, room_id, club)
     await manager.broadcast(result.room_id, {
-        "type": "guest_joined",
-        "awayClub": result.away_club,
-        "status": result.status,
+        "type": "room_updated",
+        "room": room
     })
+    
     return result
