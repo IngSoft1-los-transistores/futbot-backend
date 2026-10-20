@@ -23,13 +23,14 @@ from app.models.room import (
     Room,
 )
 from app.models.squad_entry import ROLE_STARTER, ROLE_SUBSTITUTE, SquadEntry
-from app.schemas.friendly_room import FriendlyRoomPlayerRead, JoinPlayerSelection
 from app.schemas.league import (
     CreateLeague,
     JoinLeagueRequest,
     JoinLeagueResponse,
+    JoinLeagueSelection,
     LeagueDetailRead,
     LeagueResponse,
+    LeagueSquadPlayerRead,
     ListLeagueResponse,
 )
 from app.services.exceptions_league import (
@@ -351,7 +352,7 @@ def _check_can_enroll(db: Session, room: Room, club_id: str) -> None:
         raise LeagueFull()
 
 
-def _validate_join_squad(db: Session, club_id: str, selections: list[JoinPlayerSelection]) -> None:
+def _validate_join_squad(db: Session, club_id: str, selections: list[JoinLeagueSelection]) -> None:
     player_ids = {s.player_id for s in selections}
     if len(player_ids) != len(selections):
         raise InvalidSquadPlayers()
@@ -404,7 +405,7 @@ def get_league(db: Session, league_id: str, club: Club) -> LeagueDetailRead:
     )
 
 
-def _load_club_squad(db: Session, league_id: str, club_id: str) -> list[FriendlyRoomPlayerRead]:
+def _load_club_squad(db: Session, league_id: str, club_id: str) -> list[LeagueSquadPlayerRead]:
     rows = db.execute(
         select(SquadEntry.role, Player.id, Player.name, Behavior.id, Behavior.name)
         .join(Player, SquadEntry.player_id == Player.id)
@@ -412,7 +413,7 @@ def _load_club_squad(db: Session, league_id: str, club_id: str) -> list[Friendly
         .where(SquadEntry.room_id == league_id, Player.club_id == club_id)
     ).all()
     squad = [
-        FriendlyRoomPlayerRead(
+        LeagueSquadPlayerRead(
             player_id=player_id,
             name=player_name,
             role=role,
