@@ -8,7 +8,7 @@ from app.db.session import get_db
 from app.models.user import User
 from app.core.dependencies import get_current_user
 from app.schemas.behaviors import BehaviorRead
-from app.services.behavior_services import get_all_behavior
+from app.services.behavior_services import get_all_behavior, erase_behavior_from_club
 
 
 logger = logging.getLogger(__name__)
@@ -32,4 +32,23 @@ def get_behaviors(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error al obtener comportamientos"
+        )
+
+@router.delete(
+    "/behaviors/{behavior_id}",
+    response_model=list[BehaviorRead], # ???
+    status_code=status.HTTP_200_OK)
+
+def erase_behavior(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> list[BehaviorRead]: # ???
+    try:
+        club_id = current_user.club.id
+        return erase_behavior_from_club(db, club_id)
+    except SQLAlchemyError as e:
+        logger.error(f"Error al eliminar comportamiento: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al eliminar comportamiento."
         )
