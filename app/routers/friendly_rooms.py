@@ -20,7 +20,7 @@ from app.schemas.friendly_room import (
 )
 from app.services.friendly_rooms import get_friendly_room, start_friendly_match
 from app.services.friendly_service import FriendlyService
-from app.ws.manager import room_manager as manager
+from app.ws.manager import room_manager
 
 router = APIRouter(
     prefix="/api/friendly/rooms",
@@ -95,9 +95,9 @@ async def join_friendly_room(
  
     club = current_user.club
     room = get_friendly_room(db, room_id, club)
-    await manager.broadcast(result.room_id, {
+    await room_manager.broadcast(result.room_id, {
         "type": "room_updated",
-        "room": room
+        "room": room.model_dump(by_alias=True, mode="json")
     })
     
     return result
