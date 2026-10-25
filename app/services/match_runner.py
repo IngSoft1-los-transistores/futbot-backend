@@ -10,15 +10,18 @@ from app.engine.live_state import match_states
 from app.engine.match_engine import MatchEngine
 from app.engine.schedule import build_schedule
 from app.engine.setup import PlayerSpec, create_initial_state
-from app.engine.state import MatchPhase, Team, publish_engine_tick
+from app.engine.state import MatchPhase, PlayerState, Team, Vec2, publish_engine_tick
 from app.models.match import ESTADO_IN_PROGRESS, ESTADO_PRE_MATCH, Match
 from app.models.match_player import MatchPlayer
 from app.models.player import Player
 from app.schemas.match_state import MatchTick
+from app.ws.manager import manager
 
 logger = logging.getLogger(__name__)
 Notifier = Callable[[str, dict], Awaitable[None]]
 _running: dict[str, asyncio.Task] = {}
+_engines: dict[str, MatchEngine] = {}
+_match_club_teams: dict[str, dict[str, Team]] = {}
 
 
 def build_engine_from_db(
@@ -32,14 +35,19 @@ def build_engine_from_db(
     rows = db.execute(
         select(MatchPlayer, Player)
         .join(Player, Player.id == MatchPlayer.player_id)
-        .where(MatchPlayer.match_id == match_id, MatchPlayer.on_field.is_(True))
-        .order_by(MatchPlayer.id)                 # orden estable entre ejecuciones
+        .where(MatchPlayer.match_id == match_id)
+        .order_by(MatchPlayer.id)
     ).all()
 
     home, away, behaviors = [], [], {}
+    substitutes: dict[Team, list[PlayerSpec]] = {Team.HOME: [], Team.AWAY: []}
     for mp, pl in rows:
         spec = PlayerSpec(pl.id, pl.speed, pl.control, pl.strength, pl.power, pl.agility)
-        (home if mp.club_id == match.home_club_id else away).append(spec)
+        team = Team.HOME if mp.club_id == match.home_club_id else Team.AWAY
+        if mp.on_field:
+            (home if team == Team.HOME else away).append(spec)
+        else:
+            substitutes[team].append(spec)
         behaviors[pl.id] = mp.behavior_id
 
     field = FieldConfig()
@@ -49,9 +57,47 @@ def build_engine_from_db(
         hydration_seconds=match.pause_duration_seconds,
         halftime_seconds=match.pause_duration_seconds,
     )
-    return MatchEngine(
+    engine = MatchEngine(
         state, field, cfg, behaviors, schedule=schedule,
     )
+    for team, specs in substitutes.items():
+        for spec in specs:
+            engine.set_substitute(
+                team,
+                spec.id,
+                PlayerState(
+                    id=spec.id,
+                    team=team,
+                    pos=Vec2(),
+                    speed=spec.speed,
+                    control=spec.control,
+                    strength=spec.strength,
+                    power=spec.power,
+                    agility=spec.agility,
+                ),
+            )
+    engine.on_ws_event = lambda event: manager.broadcast_event(match_id, event)
+    return engine
+
+
+def request_match_substitution(
+    match_id: str, club_id: str, out_player_id: str | int, in_player_id: str | int
+) -> dict:
+    engine = _engines.get(match_id)
+    if engine is None:
+        return {
+            "type": "error",
+            "ok": False,
+            "message": "El partido no tiene un motor activo",
+        }
+    team = _match_club_teams.get(match_id, {}).get(club_id)
+    if team is None:
+        return {
+            "type": "error",
+            "ok": False,
+            "message": "El club no participa en este partido",
+        }
+    return engine.request_substitution(team, out_player_id, in_player_id)
 
 
 def capture_tick(engine, roster, club_of, previous_goals=0):
@@ -106,6 +152,8 @@ async def _play(match_id, engine, roster, club_of, sessions, notifier):
 def _completed(match_id, task):
     if _running.get(match_id) is task:
         _running.pop(match_id, None)
+        _engines.pop(match_id, None)
+        _match_club_teams.pop(match_id, None)
     if not task.cancelled() and (error := task.exception()) is not None:
         logger.error("Falló el motor del partido %s", match_id,
                      exc_info=(type(error), error, error.__traceback__))
@@ -135,6 +183,11 @@ def start_match(db: Session, match_id: str, cfg, notifier: Notifier | None = Non
         task = loop.create_task(_play(match_id, engine, roster, club_of, sessions, notifier),
                                 name=f"match-{match_id}")
         _running[match_id] = task
+        _engines[match_id] = engine
+        _match_club_teams[match_id] = {
+            match.home_club_id: Team.HOME,
+            match.away_club_id: Team.AWAY,
+        }
         task.add_done_callback(lambda done: _completed(match_id, done))
     except BaseException:
         engine.close()

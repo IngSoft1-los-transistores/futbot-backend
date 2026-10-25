@@ -237,6 +237,26 @@ Mensajes del servidor:
   Estos cierran la conexión y no provocan reintentos del frontend.
 - `{"type":"ping"}` cada 15 segundos; el cliente responde
   `{"type":"pong"}`. Es mantenimiento de conexión, no consulta de estado.
+- `{"type":"SUBSTITUTION_SCHEDULED","ok":true,"status":"scheduled",...}`:
+  sustitución aceptada durante el juego; queda pendiente hasta la siguiente
+  pausa. `{"type":"SUBSTITUTION_APPLIED","ok":true,"status":"applied",...}`
+  confirma que el cambio ya se aplicó.
+
+El cliente puede solicitar un cambio enviando
+`{"type":"SUBSTITUTE_PLAYER","outPlayerId":"<id titular>","inPlayerId":"<id suplente>"}`.
+El servidor determina el club a partir de la sesión autenticada (no acepta un
+`club_id` del cliente). Los identificadores deben pertenecer al partido; el que
+sale debe estar en cancha y el que entra debe ser suplente de ese mismo club.
+Durante el juego se acepta como máximo una solicitud pendiente por club y se
+aplica en la próxima pausa. Durante una pausa se aplica inmediatamente y se
+permite como máximo un cambio por club en esa pausa. Los rechazos se devuelven
+solo al socket que hizo la solicitud como
+`{"type":"error","ok":false,"message":"..."}`. Los eventos programados y
+aplicados se envían a todos los sockets autorizados de ese partido.
+
+El motor mantiene titulares y suplentes en memoria mientras corre el partido.
+Esta operación no modifica la convocatoria original en la base de datos; los
+snapshots reflejan qué jugadores están en cancha en cada tick.
 
 El último snapshot se guarda en `app/engine/live_state.py`, en un diccionario
 por `match_id`. `publish_match_state` valida el tick, actualiza ese diccionario y

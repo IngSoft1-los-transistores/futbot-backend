@@ -8,10 +8,13 @@ from sqlalchemy.orm import Session
 from starlette.websockets import WebSocketDisconnect
 
 from app.core.security import create_access_token, decode_access_token
+from app.core.config import get_settings
+from app.engine.state import MatchPhase, Team
 from app.models.auth_session import AuthSession
 from app.engine.live_state import match_states
 from app.models.user import User
 from app.services.auth import start_session
+from app.services import match_runner
 from app.services.match_state import publish_match_state
 from scripts.demo_match import create_demo, make_tick
 
@@ -120,6 +123,56 @@ def test_heartbeat_does_not_poll_state_and_token_expiry_closes_socket(client, db
                 assert message['status'] == 401
                 break
             socket.send_json({'type': 'pong'})
+
+
+def test_substitution_command_is_applied_and_events_reach_websocket(
+    client, db, demo, monkeypatch
+):
+    token = token_for(db, demo.emails[0])
+    engine = match_runner.build_engine_from_db(db, demo.match_id, get_settings())
+    engine.start()
+    monkeypatch.setitem(match_runner._engines, demo.match_id, engine)
+    monkeypatch.setitem(match_runner._match_club_teams, demo.match_id, {
+        demo.club_ids[0]: Team.HOME,
+        demo.club_ids[1]: Team.AWAY,
+    })
+
+    try:
+        with connect(client, demo.match_id) as socket:
+            assert authenticate(socket, token)['type'] == 'state'
+            socket.send_json({
+                'type': 'SUBSTITUTE_PLAYER',
+                'outPlayerId': demo.player_ids[0][0],
+                'inPlayerId': demo.player_ids[0][3],
+            })
+            scheduled = socket.receive_json()
+            assert scheduled['type'] == 'SUBSTITUTION_SCHEDULED'
+            assert engine.pending_substitution[Team.HOME] == {
+                'outPlayerId': demo.player_ids[0][0],
+                'inPlayerId': demo.player_ids[0][3],
+            }
+
+            engine.state.phase = MatchPhase.HYDRATION
+            engine._apply_substitutions()
+            applied = socket.receive_json()
+            assert applied['type'] == 'SUBSTITUTION_APPLIED'
+            assert demo.player_ids[0][3] in {
+                player.id for player in engine.state.players
+            }
+            assert demo.player_ids[0][0] not in {
+                player.id for player in engine.state.players
+            }
+
+            socket.send_json({
+                'type': 'SUBSTITUTE_PLAYER',
+                'outPlayerId': demo.player_ids[0][1],
+                'inPlayerId': demo.player_ids[0][4],
+            })
+            rejected = socket.receive_json()
+            assert rejected['type'] == 'error'
+            assert rejected['message'] == 'Solo se permite 1 cambio por pausa'
+    finally:
+        engine.close()
 
 
 def test_disallowed_origin_is_rejected(client, demo):

@@ -15,7 +15,7 @@ from app.engine.physics import (
 )
 from app.engine.schedule import Segment, build_schedule
 from app.engine.setup import reset_to_kickoff
-from app.engine.state import GoalEvent, MatchPhase, MatchState, Team, Vec2
+from app.engine.state import GoalEvent, MatchPhase, MatchState, PlayerState, Team, Vec2
 
 logger = logging.getLogger(__name__)
 
@@ -43,12 +43,17 @@ class MatchEngine:
         self.pending_substitution = {Team.HOME: None, Team.AWAY: None}
         self.changes_used_this_pause = {Team.HOME: 0, Team.AWAY: 0}
         self.ws_events: list[dict] = []
+        self.on_ws_event: Callable[[dict], None] | None = None
         self.coach_active = {Team.HOME: False, Team.AWAY: False}
         self._starters_by_team = {
             Team.HOME: {p.id for p in state.players if p.team == Team.HOME},
             Team.AWAY: {p.id for p in state.players if p.team == Team.AWAY},
         }
         self._bench_by_team = {Team.HOME: set(), Team.AWAY: set()}
+        self._bench_players: dict[Team, dict[str, PlayerState]] = {
+            Team.HOME: {},
+            Team.AWAY: {},
+        }
 
     async def _collect_actions(self) -> dict[str, Action]:
         ctx = TickContext(self.state, self.field, self.behavior_ids)
@@ -107,15 +112,24 @@ class MatchEngine:
             message["status"] = status
         message.update(payload)
         self.ws_events.append(message)
+        if self.on_ws_event is not None and event_type != "error":
+            self.on_ws_event(message)
         return message
 
-    def set_substitute(self, team: Team | str, player_id: str | int) -> None:
+    def set_substitute(
+        self,
+        team: Team | str,
+        player_id: str | int,
+        player_state: PlayerState,
+    ) -> None:
         team = self._normalize_team(team)
         pid = str(player_id)
-        if pid not in {p.id for p in self.state.players if p.team == team}:
-            raise ValueError(f"Jugador {player_id} no pertenece al club {team}")
+        if pid in self._starters_by_team[team] or pid in self._bench_by_team[team]:
+            raise ValueError(f"Jugador {player_id} ya está registrado en el equipo {team}")
+        if player_state.id != pid or player_state.team != team:
+            raise ValueError("El estado del suplente no coincide con el equipo y jugador")
+        self._bench_players[team][pid] = player_state
         self._bench_by_team[team].add(pid)
-        self._starters_by_team[team].discard(pid)
 
     def _apply_single_substitution(self, team: Team, out_player_id: str, in_player_id: str) -> None:
         team = self._normalize_team(team)
@@ -124,15 +138,29 @@ class MatchEngine:
         if in_player_id not in self._bench_by_team[team]:
             raise ValueError(f"Jugador suplente no válido: {in_player_id}")
 
-        self._starters_by_team[team].discard(out_player_id)
-        self._starters_by_team[team].add(in_player_id)
-        self._bench_by_team[team].discard(in_player_id)
-        self._bench_by_team[team].add(out_player_id)
-
         out_player = next((p for p in self.state.players if p.team == team and p.id == out_player_id), None)
-        in_player = next((p for p in self.state.players if p.team == team and p.id == in_player_id), None)
-        if out_player is not None and in_player is not None:
-            out_player.pos, in_player.pos = in_player.pos, out_player.pos
+        in_player = self._bench_players[team][in_player_id]
+        if out_player is None:
+            raise ValueError(f"Jugador titular no válido: {out_player_id}")
+
+        out_index = self.state.players.index(out_player)
+        out_position = out_player.pos
+        out_velocity = out_player.vel
+        out_player.pos = in_player.pos
+        in_player.pos = out_position
+        in_player.vel = out_velocity
+        self.state.players[out_index] = in_player
+
+        if self.state.ball.owner_id == out_player_id:
+            self.state.ball.owner_id = None
+            self.state.ball.last_kicker_id = None
+
+        self._starters_by_team[team].remove(out_player_id)
+        self._starters_by_team[team].add(in_player_id)
+        self._bench_by_team[team].remove(in_player_id)
+        self._bench_by_team[team].add(out_player_id)
+        del self._bench_players[team][in_player_id]
+        self._bench_players[team][out_player_id] = out_player
 
     def request_substitution(self, team: Team | str, out_player_id: str | int, in_player_id: str | int) -> dict:
         team = self._normalize_team(team)
@@ -143,7 +171,7 @@ class MatchEngine:
             return self._emit_ws_event(
                 "error",
                 ok=False,
-                message="Solo se permite 1 cambio por pausa",
+                message="No se permiten sustituciones mientras el DT está activo",
                 team=team.value,
                 outPlayerId=out,
                 inPlayerId=inn,
@@ -170,6 +198,15 @@ class MatchEngine:
             )
 
         if self.state.phase == MatchPhase.PLAY:
+            if self.pending_substitution[team] is not None:
+                return self._emit_ws_event(
+                    "error",
+                    ok=False,
+                    message="Ya hay una sustitución pendiente para este club",
+                    team=team.value,
+                    outPlayerId=out,
+                    inPlayerId=inn,
+                )
             self.pending_substitution[team] = {"outPlayerId": out, "inPlayerId": inn}
             return self._emit_ws_event(
                 "SUBSTITUTION_SCHEDULED",
