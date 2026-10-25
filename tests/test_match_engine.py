@@ -183,3 +183,67 @@ async def test_own_goal_has_no_author(make_engine):
     await eng.tick()
     assert eng.state.goals[0].player_id is None
     assert eng.state.score[Team.HOME] == 1
+
+
+@pytest.mark.asyncio
+async def test_pending_substitution_is_stored_in_memory_and_applies_on_pause(make_engine):
+    eng = make_engine()
+    eng.start()
+    eng.set_substitute(Team.HOME, "h2")
+
+    result = eng.request_substitution(Team.HOME, "h0", "h2")
+
+    assert result["ok"] is True
+    assert result["status"] == "scheduled"
+    assert eng.pending_substitution[Team.HOME]["outPlayerId"] == "h0"
+    assert eng.pending_substitution[Team.HOME]["inPlayerId"] == "h2"
+    assert eng.ws_events[-1]["type"] == "SUBSTITUTION_SCHEDULED"
+
+    eng.state.phase = P.HYDRATION
+    eng._apply_substitutions()
+
+    assert eng.pending_substitution[Team.HOME] is None
+    assert eng.changes_used_this_pause[Team.HOME] == 1
+    assert eng.ws_events[-1]["type"] == "SUBSTITUTION_APPLIED"
+
+
+@pytest.mark.asyncio
+async def test_substitution_applies_immediately_during_pause(make_engine):
+    eng = make_engine()
+    eng.start()
+    eng.state.phase = P.HYDRATION
+    eng.set_substitute(Team.HOME, "h2")
+
+    result = eng.request_substitution(Team.HOME, "h0", "h2")
+
+    assert result["ok"] is True
+    assert result["status"] == "applied"
+    assert eng.changes_used_this_pause[Team.HOME] == 1
+    assert eng.ws_events[-1]["type"] == "SUBSTITUTION_APPLIED"
+
+
+@pytest.mark.asyncio
+async def test_substitution_is_blocked_if_already_used_this_pause(make_engine):
+    eng = make_engine()
+    eng.start()
+    eng.state.phase = P.HYDRATION
+    eng.changes_used_this_pause[Team.HOME] = 1
+    eng.set_substitute(Team.HOME, "h2")
+
+    result = eng.request_substitution(Team.HOME, "h0", "h2")
+
+    assert result["ok"] is False
+    assert result["message"] == "Solo se permite 1 cambio por pausa"
+    assert eng.pending_substitution[Team.HOME] is None
+
+
+@pytest.mark.asyncio
+async def test_resume_clears_changes_used_this_pause(make_engine):
+    eng = make_engine()
+    eng.start()
+    eng.state.phase = P.HYDRATION
+    eng.changes_used_this_pause[Team.HOME] = 1
+
+    eng._enter_segment(0)
+
+    assert eng.changes_used_this_pause[Team.HOME] == 0
