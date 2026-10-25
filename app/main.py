@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
         db.close()
 
     register_league_events()
-    leagues_hub.bind_loop(asyncio.get_runnig_loop())
+    leagues_hub.bind_loop(asyncio.get_running_loop())
 
     try:
         yield
