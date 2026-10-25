@@ -25,6 +25,10 @@ def get_user_from_token(db: Session, token: str | None) -> User | None:
         user_id = claims["sub"]
     except (JWTError, ValueError, TypeError, KeyError):
         return None
+    if (session is None or session.revoked or session.expires_at <= time()
+            or session.user_id != user_id):
+        return None
+    return db.get(User, user_id)
 
 
 def get_current_user(
