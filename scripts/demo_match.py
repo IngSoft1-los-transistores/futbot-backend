@@ -86,7 +86,8 @@ def create_demo(db: Session, duration: int = 120) -> Demo:
     password_hash = hash_password(PASSWORD)
     for side, label in enumerate(('local', 'visitante')):
         email = f'demo.{label}.{suffix}@futbot.test'
-        user = User(username=f'demo-{label}-{suffix}', email=email, password_hash=password_hash)
+        user = User(username=f'demo-{label}-{suffix}', email=email,
+                    password_hash=password_hash, email_verified_at=ahora_utc())
         user.club = Club(name=f'Demo {label.title()} {suffix}')
         db.add(user)
         db.flush()

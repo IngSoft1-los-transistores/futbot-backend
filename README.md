@@ -309,3 +309,39 @@ uvicorn app.main:app --reload --port 8001
 ```
 
 Si se cambia el puerto, hay que actualizar `VITE_API_URL` y `VITE_WS_URL` en el frontend.
+
+
+## Verificación de correo
+
+El registro conserva la respuesta 201 y crea una cuenta con `email_verified_at = null`.
+La cuenta y el hash del token se confirman antes del envío SMTP. Si el envío falla,
+la cuenta permanece creada y puede solicitar un nuevo enlace. El token dura 24 horas
+por defecto, solo se guarda su SHA-256 y nunca se incluye en la respuesta del registro.
+
+- `POST /api/auth/verify-email`, body `{"token": "..."}`: devuelve 200 al verificar.
+  Repetir un token ya consumido devuelve 200 sin cambiar la fecha, incluso después
+  de su vencimiento. Un token vencido devuelve 400 / `EMAIL_VERIFICATION_TOKEN_EXPIRED`;
+  uno desconocido o invalidado devuelve 400 / `EMAIL_VERIFICATION_TOKEN_INVALID`.
+- `POST /api/auth/resend-verification`, body `{"email": "usuario@example.com"}`:
+  devuelve siempre 200 con un mensaje genérico para emails válidos, aunque no existan,
+  estén verificados o se haya alcanzado el límite. Cada reenvío invalida enlaces pendientes.
+  Por defecto permite un reenvío por minuto por email y diez solicitudes por hora por IP.
+  Los contadores se guardan en la base y se comparten entre workers; los emails e IPs
+  se usan como hashes en sus claves. Las ventanas vencidas se reutilizan al recibir otra solicitud.
+- Login y refresh rechazan cuentas sin verificar con 403 / `EMAIL_NOT_VERIFIED`.
+  Las credenciales incorrectas siguen devolviendo 401.
+
+Configurar las variables SMTP y `EMAIL_VERIFICATION_URL` de `.env.example` antes de
+usar correo real. El proveedor implementa `EmailSender`; los tests sustituyen la
+dependencia `get_email_sender` por un fake, sin conexiones SMTP. No se envían emails
+reales al ejecutar las pruebas. El enlace apunta a una página del frontend que debe
+leer el token y llamar al endpoint POST; esta implementación agrega únicamente el backend.
+En producción usar HTTPS y configurar correctamente las IPs de proxy confiables en
+Uvicorn: el límite usa `request.client.host`, sin interpretar directamente encabezados enviados por el cliente.
+
+Al arrancar se agrega la columna faltante a `users` y se crean las tablas nuevas,
+sin borrar datos. Las cuentas anteriores quedan sin verificar y deben solicitar
+reenvío antes de su próximo login o refresh. Las sesiones de acceso ya emitidas
+conservan su vigencia. Para actualizar una base existente, realizar el primer arranque
+con un solo proceso antes de levantar los demás workers (la migración aditiva no
+coordina ejecuciones simultáneas). No hace falta borrar `futbot.db`.

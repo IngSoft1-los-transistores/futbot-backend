@@ -19,10 +19,10 @@ logger = logging.getLogger(__name__)
 DIRECTORIO_DEFAULTS = Path(__file__).resolve().parent.parent / "behaviors" / "defaults"
 
 def crear_tablas(engine: Engine) -> None:
-    """Crea las tablas que todavia no existen.
-    `create_all()` **no es una migracion**: crea lo que falta y no toca lo que
-    ya esta.
-    """
+    """Aplica la migración de correo y crea las tablas que todavía no existen."""
+    from app.db.migrations import migrate_email_verification
+
+    migrate_email_verification(engine)
     Base.metadata.create_all(bind=engine)
 
 
