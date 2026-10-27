@@ -144,9 +144,8 @@ def validacion(monkeypatch) -> MagicMock:
 def broadcast(monkeypatch) -> AsyncMock:
     """Mock del aviso por WebSocket: no se abre ninguna conexion real."""
     mock = AsyncMock()
-    monkeypatch.setattr("app.routers.friendly_rooms.manager.broadcast", mock)
+    monkeypatch.setattr("app.routers.friendly_rooms.room_manager.broadcast", mock)
     return mock
-
 
 # --- Caso feliz ---
 
@@ -214,7 +213,7 @@ def test_sala_inexistente_devuelve_404_con_el_formato_de_error(
     assert {"detail", "error_code"} <= r.json().keys()   # formato unico del contrato
 
 
-def test_sala_completa_devuelve_400_y_no_se_modifica(
+def test_sala_completa_devuelve_409_y_no_se_modifica(
     client: TestClient, db: Session, como, sala: Room, invitado: Club,
     jugadores: list[Player], comportamiento: Behavior,
 ) -> None:
@@ -225,11 +224,11 @@ def test_sala_completa_devuelve_400_y_no_se_modifica(
 
     r = client.post(url(sala_id), json=armar_body(jugadores, comportamiento))
 
-    assert r.status_code == 400
+    assert r.status_code == 409
     assert db.query(Enrollment).filter_by(room_id=sala_id).count() == 1   # Solo el anfitrion
 
 
-def test_sala_iniciada_devuelve_400(
+def test_sala_iniciada_devuelve_409(
     client: TestClient, db: Session, como, sala: Room, invitado: Club,
     jugadores: list[Player], comportamiento: Behavior,
 ) -> None:
@@ -240,7 +239,7 @@ def test_sala_iniciada_devuelve_400(
 
     r = client.post(url(sala_id), json=armar_body(jugadores, comportamiento))
 
-    assert r.status_code == 400
+    assert r.status_code == 409
 
 # --- Codigo de sala (contrasena) ---
 
@@ -362,21 +361,38 @@ def test_unirse_avisa_a_la_sala_por_websocket(
     client: TestClient, como, sala: Room, invitado: Club,
     jugadores: list[Player], comportamiento: Behavior, broadcast: AsyncMock,
 ) -> None:
+    """El broadcast debe emitir type=room_updated con la sala completa incluyendo awayClub."""
     sala_id, invitado_id = sala.id, invitado.id
     como(invitado_id)
 
     client.post(url(sala_id), json=armar_body(jugadores, comportamiento))
 
-    broadcast.assert_awaited_once_with(
-        sala_id,
-        {"type": "guest_joined", "awayClub": invitado_id, "status": "readyToStart"},
-    )
+    broadcast.assert_awaited_once()
+    broadcast_sala_id, payload = broadcast.await_args.args
+
+    assert broadcast_sala_id == sala_id
+    assert payload["type"] == "room_updated"
+
+    room = payload["room"]
+    assert room["roomId"] == sala_id
+    assert room["status"] == "readyToStart"
+
+    # awayClub debe incluir datos completos
+    away = room["awayClub"]
+    assert away is not None
+    assert away["clubId"] == invitado_id
+    assert isinstance(away["clubName"], str) and away["clubName"]
+    assert isinstance(away["players"], list) and len(away["players"]) == 6
+
+    # debe estar presente homeClub
+    assert room["homeClub"] is not None
 
 
 def test_si_falla_unirse_no_se_avisa_por_websocket(
     client: TestClient, db: Session, como, sala: Room, invitado: Club,
     jugadores: list[Player], comportamiento: Behavior, broadcast: AsyncMock,
 ) -> None:
+    """Si la sala ya está iniciada (409), no se debe emitir ningún evento."""
     sala.status = ROOM_STATUS_IN_PROGRESS
     db.commit()
     como(invitado.id)
@@ -384,6 +400,44 @@ def test_si_falla_unirse_no_se_avisa_por_websocket(
     client.post(url(sala.id), json=armar_body(jugadores, comportamiento))
 
     broadcast.assert_not_awaited()
+
+
+def test_si_falla_validacion_no_se_avisa_por_websocket(
+    client: TestClient, db: Session, como, sala: Room, invitado: Club,
+    jugadores: list[Player], comportamiento: Behavior,
+    broadcast: AsyncMock, validacion: MagicMock,
+) -> None:
+    """Si la validación falla (400), no se debe emitir ningún evento."""
+    from fastapi import HTTPException
+    validacion.side_effect = HTTPException(400, detail="Jugador invalido.")
+    como(invitado.id)
+
+    r = client.post(url(sala.id), json=armar_body(jugadores, comportamiento))
+
+    assert r.status_code == 400
+    broadcast.assert_not_awaited()
+
+
+# test con broadcast sin mock del room_manager
+
+
+def test_broadcast_no_falla_por_cache_de_sesion_post_commit(
+    client: TestClient, db: Session, como, sala: Room, invitado: Club,
+    jugadores: list[Player], comportamiento: Behavior,
+) -> None:
+    """Verifica que get_friendly_room puede leer el club visitante después del commit
+    de join_room sin problemas de caché SQLAlchemy. Se usa el broadcast real pero sin
+    WebSocket suscrito, por lo que es un no-op seguro."""
+    
+    # Sin override del broadcast: el room_manager real no tiene suscriptores y no hace nada.
+    sala_id, invitado_id = sala.id, invitado.id
+    como(invitado_id)
+
+    r = client.post(url(sala_id), json=armar_body(jugadores, comportamiento))
+
+    # Si devuelve 200 confirma que el commit fue visible para get_friendly_room
+    assert r.status_code == 200
+    assert r.json()["status"] == "readyToStart"
 
 
 # --- Autenticacion ---

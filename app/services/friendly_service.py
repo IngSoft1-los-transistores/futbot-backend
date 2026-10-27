@@ -194,7 +194,7 @@ class FriendlyService:
 
         if room.status != ROOM_STATUS_WAITING_GUEST:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=status.HTTP_409_CONFLICT,
                 detail="La sala esta completa o fue iniciada."
                 )
 
@@ -221,7 +221,7 @@ class FriendlyService:
         if reclaimed == 0:
             self.db.rollback()
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=status.HTTP_409_CONFLICT,
                 detail="La sala esta completa o fue iniciada."
                 )
 
@@ -237,7 +237,6 @@ class FriendlyService:
                     behavior_id=s.behavior_id,
                     role=role,
                 ))
-
         self.db.commit()
 
         return JoinFriendlyRoomResponse(
