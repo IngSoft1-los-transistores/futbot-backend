@@ -21,7 +21,7 @@ from app.models.room import (
 )
 from app.models.squad_entry import ROLE_STARTER, SquadEntry
 from app.models.user import User
-from app.services.friendly_service import FriendlyService
+from app.services.squad_validator import validate_squad_selection
 from types import SimpleNamespace
 
 """Tests de POST /api/friendly/rooms/{room_id}/join."""
@@ -129,15 +129,15 @@ def como() -> Generator[Callable[[str], None], None, None]:
     app.dependency_overrides.pop(get_current_user, None)
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def validacion(monkeypatch) -> MagicMock:
-    """Mock de la validacion de jugadores y comportamientos (logica de la otra branch).
+    """Espía la validación real de la plantilla.
 
-    Por defecto 'pasa'. Un test puede darle side_effect para simular un error.
+    Un test puede darle side_effect para forzar un error.
     """
-    mock = MagicMock()
-    monkeypatch.setattr(FriendlyService, "validate_players_and_behaviors", mock)
-    return mock
+    spy = MagicMock(wraps=validate_squad_selection)
+    monkeypatch.setattr("app.services.friendly_service.validate_squad_selection", spy)
+    return spy
 
 
 @pytest.fixture(autouse=True)
@@ -303,7 +303,7 @@ def test_codigo_incorrecto_no_revela_si_la_sala_esta_completa(
 
 def test_club_con_menos_de_6_jugadores_devuelve_400(
     client: TestClient, db: Session, como, sala: Room, invitado: Club,
-    comportamiento: Behavior, validacion: MagicMock,
+    comportamiento: Behavior,
 ) -> None:
     pocos = crear_jugadores(db, invitado.id, 5)   # El club solo tiene 5 (este test no usa el fixture jugadores)
     como(invitado.id)
@@ -311,7 +311,7 @@ def test_club_con_menos_de_6_jugadores_devuelve_400(
     r = client.post(url(sala.id), json=armar_body(pocos + pocos[:1], comportamiento))
 
     assert r.status_code == 400
-    validacion.assert_not_called()   # El chequeo de cantidad va antes que la validacion
+    assert r.json()["error_code"] == "INVALID_SQUAD"   # No hay 6 jugadores propios distintos
 
 
 def test_valida_la_seleccion_con_el_club_autenticado(
@@ -323,7 +323,25 @@ def test_valida_la_seleccion_con_el_club_autenticado(
 
     client.post(url(sala.id), json=armar_body(jugadores, comportamiento))
 
-    validacion.assert_called_once_with(invitado_id, ANY)   # Se valida contra SU club, no otro
+    # Se valida contra SU club, no otro
+    validacion.assert_called_once_with(ANY, invitado_id, ANY, ANY)
+
+
+def test_players_of_another_club_are_rejected_and_the_room_stays_open(
+    client: TestClient, db: Session, como, sala: Room, anfitrion: Club, invitado: Club,
+    comportamiento: Behavior,
+) -> None:
+    room_id = sala.id
+    host_players = crear_jugadores(db, anfitrion.id, 6)
+    como(invitado.id)
+
+    response = client.post(url(room_id), json=armar_body(host_players, comportamiento))
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "INVALID_SQUAD"
+    db.expire_all()
+    assert db.get(Room, room_id).status == ROOM_STATUS_WAITING_GUEST
+    assert db.query(Enrollment).filter_by(room_id=room_id).count() == 1
 
 
 def test_error_de_validacion_se_propaga_y_no_une_a_la_sala(

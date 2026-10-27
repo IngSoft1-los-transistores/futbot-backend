@@ -1,5 +1,3 @@
-from collections import Counter
-
 from fastapi import HTTPException, status
 from sqlalchemy import exists, select, update
 from sqlalchemy.exc import IntegrityError
@@ -28,8 +26,6 @@ from app.models.room import (
 from app.models.squad_entry import (
     ROLE_STARTER,
     ROLE_SUBSTITUTE,
-    STARTER_COUNT,
-    SUBSTITUTE_COUNT,
     SquadEntry,
 )
 from app.schemas.friendly_room import (
@@ -37,6 +33,7 @@ from app.schemas.friendly_room import (
     FriendlyRoomPlayerRead,
     FriendlyRoomRead,
 )
+from app.services.squad_validator import validate_squad_selection
 
 """Business logic for friendly rooms."""
 
@@ -58,41 +55,6 @@ def _already_started() -> HTTPException:
         "MATCH_ALREADY_STARTED",
         "El partido de esta sala ya fue iniciado",
     )
-
-
-def _invalid_squad() -> HTTPException:
-    return _error(
-        status.HTTP_400_BAD_REQUEST,
-        "INVALID_SQUAD",
-        "Algún club no tiene sus 3 titulares y 3 suplentes con comportamientos válidos",
-    )
-
-
-def _validate_squads(
-    db: Session,
-    rows: list[tuple[SquadEntry, Player, Behavior]],
-    club_ids: set[str],
-) -> None:
-    """Each club needs 3 starters and 3 substitutes with usable players and behaviors."""
-    roles_per_club: dict[str, Counter] = {club_id: Counter() for club_id in club_ids}
-
-    for entry, player, behavior in rows:
-        if player.club_id not in club_ids:
-            raise _invalid_squad()
-        
-        if player.deleted_at is not None:
-            raise _invalid_squad()
-
-        if behavior.deleted_at is not None or behavior.club_id not in (
-            None,
-            player.club_id,
-        ):
-            raise _invalid_squad()
-        roles_per_club[player.club_id][entry.role] += 1
-
-    expected = Counter({ROLE_STARTER: STARTER_COUNT, ROLE_SUBSTITUTE: SUBSTITUTE_COUNT})
-    if any(roles != expected for roles in roles_per_club.values()):
-        raise _invalid_squad()
 
 
 def _get_room_for_member(db: Session, room_id: str, club: Club) -> tuple[Room, set[str]]:
@@ -183,7 +145,15 @@ def start_friendly_match(db: Session, room_id: str, club: Club) -> Match:
         )
 
     rows = _load_squads(db, room.id)
-    _validate_squads(db, rows, club_ids)
+    # SquadEntry no guarda club_id: cada entrada pertenece al club de su jugador.
+    for club_id in club_ids:
+        entries = [entry for entry, player, _behavior in rows if player.club_id == club_id]
+        validate_squad_selection(
+            db,
+            club_id,
+            [entry for entry in entries if entry.role == ROLE_STARTER],
+            [entry for entry in entries if entry.role == ROLE_SUBSTITUTE],
+        )
 
     home_club_id = room.creator_club_id
     (away_club_id,) = club_ids - {home_club_id}
