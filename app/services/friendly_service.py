@@ -2,7 +2,6 @@ import random
 import secrets
 import string
 from fastapi import HTTPException, status
-from sqlalchemy import or_, func
 from sqlalchemy.orm import Session
 
 from app.models.room import (
@@ -17,13 +16,10 @@ from app.models.squad_entry import (
     SquadEntry,
     ROLE_STARTER,
     ROLE_SUBSTITUTE,
-    STARTER_COUNT,
-    SUBSTITUTE_COUNT,
 )
 
-from app.models.player import Player
-from app.models.behavior import Behavior
 from app.schemas.friendly_room import CreateFriendlyRoomRequest, FriendlyRoomResponse, RoomStatus, JoinFriendlyRoomRequest, JoinFriendlyRoomResponse
+from app.services.squad_validator import validate_squad_selection
 
 def generate_room_code(length: int = 6) -> str:
     """Genera un codigo alfanumerico unico para unirse a la sala de amistoso"""
@@ -33,86 +29,10 @@ class FriendlyService:
     def __init__(self, db: Session):
         self.db = db
 
-    def validate_players_and_behaviors(self, club_id: str, request: CreateFriendlyRoomRequest | JoinFriendlyRoomRequest):
-        
-        # Validacion de numero de jugadores
-        if len(request.starters) != STARTER_COUNT:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Se requieren exactamente {STARTER_COUNT} jugadores titulares."
-            )
-        if len(request.substitutes) != SUBSTITUTE_COUNT:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Se requieren exactamente {SUBSTITUTE_COUNT} jugadores suplentes."
-            )
-
-        all_selecctions = request.starters + request.substitutes
-        player_ids = [s.player_id for s in all_selecctions]
-        behavior_ids = [s.behavior_id for s in all_selecctions]
-
-
-
-
-        # Checkeo de jugadores repetidos
-        if len(set(player_ids)) != len(player_ids):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No se puede seleccionar el mismo jugador mas de una vez."
-            )
-
-
-
-
-        # Validacion de pertenencia de jugadores existentes en el club
-        valid_players = (
-            self.db.query(Player.name, Player.id)
-            .filter(
-                Player.name.in_(player_ids),
-                Player.club_id == club_id,
-                Player.deleted_at.is_(None)
-            ).all()
-        )
-        valid_players_ids = {p.name: p.id for p in valid_players}
-        
-        if len(valid_players_ids) != len(player_ids):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Al menos un jugador seleccionado no pertenece a tu club o no esta disponible."
-            )
-
-        for selection in all_selecctions:
-            selection.player_id = valid_players_ids[selection.player_id]
-
-
-
-        # Validacion de comportamientos pertenecen a club o son preprogramados
-        valid_behaviors = (
-            self.db.query(Behavior.id)
-            .filter(
-                Behavior.id.in_(behavior_ids),
-                Behavior.deleted_at.is_(None),
-                or_(
-                    Behavior.club_id == club_id,
-                    Behavior.is_preprogrammed.is_(True),
-                    Behavior.club_id.is_(None)
-                )
-            )
-            .all()
-        )
-        valid_behaviors_ids = {b.id for b in valid_behaviors}
-
-        if len(valid_behaviors_ids) != len(set(behavior_ids)):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Al menos un comportamiento seleccionado es invalido o no pertenece a tu club."
-            )
-
-
     def create_room(self, club_id: str, request: CreateFriendlyRoomRequest) -> FriendlyRoomResponse:
-        
+
         # Validaciones de negocio
-        self.validate_players_and_behaviors(club_id, request)
+        validate_squad_selection(self.db, club_id, request.starters, request.substitutes)
 
 
 
@@ -198,19 +118,7 @@ class FriendlyService:
                 detail="La sala esta completa o fue iniciada."
                 )
 
-        # verificar que el club tiene al menos 6 jugadores
-        total_players = (
-            self.db.query(func.count(Player.id))
-            .filter(Player.club_id == club_id, Player.deleted_at.is_(None))
-            .scalar()
-        )
-        if total_players < STARTER_COUNT + SUBSTITUTE_COUNT:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Necesitas al menos {STARTER_COUNT + SUBSTITUTE_COUNT} jugadores creados para unirte.",
-            )
-
-        self.validate_players_and_behaviors(club_id, request)
+        validate_squad_selection(self.db, club_id, request.starters, request.substitutes)
 
         # Solo un invitado puede pasar de waiting_guest a ready_to_start
         reclaimed = (

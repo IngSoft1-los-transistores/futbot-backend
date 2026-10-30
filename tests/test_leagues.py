@@ -14,14 +14,11 @@ from app.models.room import ROOM_STATUS_WAITING_GUEST, ROOM_TYPE_PRIVATE, Room
 from app.models.squad_entry import ROLE_STARTER, ROLE_SUBSTITUTE, SquadEntry
 from app.services.exceptions_league import (
     DuplicateLeagueName,
-    DuplicatePlayer,
-    InvalidBehavior,
     InvalidLeaguePassword,
     MaxClubsBelowMin,
     MaxClubsTooHigh,
     MinClubsTooLow,
     PasswordNotAllowedOnPublicLeague,
-    PlayerNotFound,
 )
 from app.services.league_service import (
     MAX_LEAGUE_PASSWORD_BYTES,
@@ -37,15 +34,20 @@ def league_payload(club_players, behavior, **changes) -> dict:
         "max_clubs": 4,
         "match_duration": 90,
         "starters": [
-            {"player_id": club_players[i].name, "behavior_id": str(behavior.id)} for i in range(3)
+            {"player_id": club_players[i].id, "behavior_id": str(behavior.id)} for i in range(3)
         ],
         "substitutes": [
-            {"player_id": club_players[i].name, "behavior_id": str(behavior.id)}
+            {"player_id": club_players[i].id, "behavior_id": str(behavior.id)}
             for i in range(3, 6)
         ],
     }
     payload.update(changes)
     return payload
+
+
+def assert_invalid_squad(response) -> None:
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "INVALID_SQUAD"
 
 
 # Caso feliz: devuelve 201 y deja guardados Room, Enrollment y 6 SquadEntry.
@@ -80,7 +82,6 @@ def test_create_league(
     assert len(squad_entries) == 6
     assert sum(entry.role == ROLE_STARTER for entry in squad_entries) == 3
     assert sum(entry.role == ROLE_SUBSTITUTE for entry in squad_entries) == 3
-    # Los nombres del payload se tradujeron a los ids reales de los jugadores.
     assert {e.player_id for e in squad_entries} == {p.id for p in club_players}
 
 
@@ -129,19 +130,18 @@ def test_create_league_duplicate_player(
         club_players,
         comportamiento_prueba,
         starters=[
-            {"player_id": repeated.name, "behavior_id": behavior_id},
-            {"player_id": repeated.name, "behavior_id": behavior_id},
-            {"player_id": club_players[1].name, "behavior_id": behavior_id},
+            {"player_id": repeated.id, "behavior_id": behavior_id},
+            {"player_id": repeated.id, "behavior_id": behavior_id},
+            {"player_id": club_players[1].id, "behavior_id": behavior_id},
         ],
     )
     response = client.post("/api/leagues", headers=auth_headers, json=payload)
 
-    assert response.status_code == 400
-    assert response.json()["detail"] == DuplicatePlayer(repeated.name).message
+    assert_invalid_squad(response)
     assert db.scalars(select(Room)).all() == []
 
 
-# Un nombre que solo existe en otro club no se resuelve: 400.
+# Un jugador de otro club: 400.
 def test_create_league_player_only_in_other_club(
     client, db, club_players, comportamiento_prueba, crear_player, other_club, auth_headers
 ):
@@ -152,30 +152,32 @@ def test_create_league_player_only_in_other_club(
         club_players,
         comportamiento_prueba,
         starters=[
-            {"player_id": foreign.name, "behavior_id": behavior_id},
-            {"player_id": club_players[0].name, "behavior_id": behavior_id},
-            {"player_id": club_players[1].name, "behavior_id": behavior_id},
+            {"player_id": foreign.id, "behavior_id": behavior_id},
+            {"player_id": club_players[0].id, "behavior_id": behavior_id},
+            {"player_id": club_players[1].id, "behavior_id": behavior_id},
         ],
     )
     response = client.post("/api/leagues", headers=auth_headers, json=payload)
 
-    assert response.status_code == 400
-    assert response.json()["detail"] == PlayerNotFound(foreign.name).message
+    assert_invalid_squad(response)
     assert db.scalars(select(Room)).all() == []
 
 
-# Mismo nombre en los dos clubes: se usa el jugador del club creador (201).
-def test_create_league_same_player_name_in_other_club(
-    client, db, club_players, comportamiento_prueba, crear_player, other_club, auth_headers
+# No se puede usar un comportamiento de otro club: 400.
+def test_create_league_behavior_of_other_club(
+    client, db, club_players, comportamiento_prueba, other_club, auth_headers
 ):
-    crear_player(other_club.id, name=club_players[0].name)
+    foreign_behavior = Behavior(
+        club_id=other_club.id, name="Foreign", code="def comportamiento(jugador):\n    pass\n"
+    )
+    db.add(foreign_behavior)
+    db.commit()
 
-    payload = league_payload(club_players, comportamiento_prueba)
+    payload = league_payload(club_players, foreign_behavior)
     response = client.post("/api/leagues", headers=auth_headers, json=payload)
 
-    assert response.status_code == 201
-    saved_ids = {e.player_id for e in db.scalars(select(SquadEntry)).all()}
-    assert saved_ids == {p.id for p in club_players}
+    assert_invalid_squad(response)
+    assert db.scalars(select(Room)).all() == []
 
 
 # Un comportamiento que no existe en la BD: 400.
@@ -189,15 +191,14 @@ def test_create_league_unknown_behavior(
         club_players,
         comportamiento_prueba,
         starters=[
-            {"player_id": club_players[0].name, "behavior_id": valid},
-            {"player_id": club_players[1].name, "behavior_id": valid},
-            {"player_id": club_players[2].name, "behavior_id": unknown},
+            {"player_id": club_players[0].id, "behavior_id": valid},
+            {"player_id": club_players[1].id, "behavior_id": valid},
+            {"player_id": club_players[2].id, "behavior_id": unknown},
         ],
     )
     response = client.post("/api/leagues", headers=auth_headers, json=payload)
 
-    assert response.status_code == 400
-    assert response.json()["detail"] == InvalidBehavior(unknown).message
+    assert_invalid_squad(response)
     assert db.scalars(select(Room)).all() == []
 
 

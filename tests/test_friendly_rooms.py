@@ -624,11 +624,11 @@ def test_create_two_friendly_room_with_same_players(
     # Formatear payload con titulares y suplentes
     payload = {
             "starters": [
-                {"player_id": p.name, "behavior_id": str(comportamiento_prueba.id)}
+                {"player_id": p.id, "behavior_id": str(comportamiento_prueba.id)}
                 for p in jugadores[:3]
             ],
             "substitutes": [
-                {"player_id": p.name, "behavior_id": str(comportamiento_prueba.id)}
+                {"player_id": p.id, "behavior_id": str(comportamiento_prueba.id)}
                 for p in jugadores[3:]
             ],
         }
@@ -708,11 +708,11 @@ def test_create_friendly_room_integration_success(
     # Formatear payload con titulares y suplentes
     payload = {
         "starters": [
-            {"player_id": p.name, "behavior_id": str(comportamiento_prueba.id)}
+            {"player_id": p.id, "behavior_id": str(comportamiento_prueba.id)}
             for p in jugadores[:3]
         ],
         "substitutes": [
-            {"player_id": p.name, "behavior_id": str(comportamiento_prueba.id)}
+            {"player_id": p.id, "behavior_id": str(comportamiento_prueba.id)}
             for p in jugadores[3:]
         ],
     }
@@ -793,7 +793,46 @@ def test_create_friendly_room_duplicate_players_400(
 
     response = client.post("/api/friendly/rooms", headers=auth_headers, json=payload)
     assert response.status_code == 400
+    assert response.json()["error_code"] == "INVALID_SQUAD"
     assert "mismo jugador" in response.json()["detail"].lower()
+
+
+def squad_payload(player_values: list[str], behavior: Behavior, player_key: str = "player_id",
+                  behavior_key: str = "behavior_id") -> dict:
+    """Payload de crear sala con los valores de jugador y el formato de claves indicados."""
+    def selection(value: str) -> dict:
+        return {player_key: value, behavior_key: behavior.id}
+
+    return {
+        "starters": [selection(v) for v in player_values[:3]],
+        "substitutes": [selection(v) for v in player_values[3:]],
+    }
+
+
+def test_create_friendly_room_accepts_camel_case_ids(
+    client: TestClient, db: Session, auth_headers: dict[str, str],
+    club_players: list[Player], comportamiento_prueba: Behavior,
+):
+    player_ids = [p.id for p in club_players]
+    payload = squad_payload(player_ids, comportamiento_prueba, "playerId", "behaviorId")
+
+    response = client.post("/api/friendly/rooms", headers=auth_headers, json=payload)
+
+    assert response.status_code == 201
+    saved = db.query(SquadEntry).filter_by(room_id=response.json()["room_id"]).all()
+    assert {e.player_id for e in saved} == set(player_ids)
+
+
+def test_create_friendly_room_rejects_player_names(
+    client: TestClient, db: Session, auth_headers: dict[str, str],
+    club_players: list[Player], comportamiento_prueba: Behavior,
+):
+    payload = squad_payload([p.name for p in club_players], comportamiento_prueba)
+
+    response = client.post("/api/friendly/rooms", headers=auth_headers, json=payload)
+
+    assert_error(response, 400, "INVALID_SQUAD")
+    assert count(db, Room) == 0
 
 def test_start_publishes_initial_state_for_websocket(client, db, club, ready_room, auth_headers):
     response = client.post(start_url(ready_room.id), headers=auth_headers)
