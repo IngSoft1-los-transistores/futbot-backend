@@ -1,6 +1,34 @@
 import ast
-# import multiprocessing
+import multiprocessing
+from app.schemas.coord import Coord
+from app.behaviors.loader import BUILTINS_RESTRINGIDOS
 
+TIMEOUT_SECONDS = 5
+# Objeto simulado para probar la función `behavior` sin necesidad de un jugador real.
+class FakePlayer:
+   def encontrar_pelota(self):
+       return Coord(x=0, y=0)
+   def encontrar_aliado(self):
+       return Coord(x=0, y=0)
+   def encontrar_enemigo(self):
+       return Coord(x=0, y=0)
+   def encontrar_arco_aliado(self):
+       return Coord(x=0, y=0)
+   def encontrar_arco_enemigo(self):
+       return Coord(x=0, y=0)
+   def encontrar_mis_coordenadas(self):
+       return Coord(x=0, y=0)
+   def tengo_pelota(self):
+       return False
+   def club_tiene_pelota(self):
+       return False
+   def pasar(self, objetivo):
+       pass
+   def patear_pelota(self, objetivo):
+       pass
+   def correr(self, objetivo):
+       pass
+    
 # Excepciones personalizadas para errores de validación de comportamientos
 class BehaviorValidationError(Exception):
     pass
@@ -15,6 +43,9 @@ class BehaviorValidator(ast.NodeVisitor):
     """
     Clase que valida el código de un comportamiento personalizado.
     """
+    def __init__(self):
+        self.behavior_functions = 0
+    
     def visit_Import(self, node):
       raise BehaviorSecurityError(f"Importaciones no permitidas: {ast.dump(node)}")
   
@@ -30,17 +61,59 @@ class BehaviorValidator(ast.NodeVisitor):
     def visit_Attribute(self, node):
         if isinstance(node.value, ast.Name) and node.value.id == '__builtins__':
             raise BehaviorSecurityError(f"Acceso a __builtins__ no permitido: {ast.dump(node)}")
+        if node.attr.startswith('__') or node.attr.startswith('_'):
+            raise BehaviorSecurityError(f"Acceso a atributos privados no permitido: {node.attr}") 
         self.generic_visit(node)
 
     def visit_Name(self, node):
         if node.id in ['__import__', 'eval', 'exec', 'open', 'compile', 'input']:
-            raise BehaviorSecurityError(f"Uso de nombre no permitido: {node.id}")
+            raise BehaviorSecurityError(f"Uso de palabra reservada no permitido: {node.id}")
         self.generic_visit(node)
+
+    def visit_FunctionDef(self, node):
+        if node.name == "behavior":
+            self.behavior_functions += 1
+            if self.behavior_functions > 1:
+              raise BehaviorValidationError("Solo se permite una función 'behavior' en el código.")
+            if len(node.args.args) != 1:
+                raise BehaviorValidationError("La función 'behavior' debe aceptar exactamente un argumento (el jugador).")
+        self.generic_visit(node)
+
+
+def _execute_code(code: str):
+  '''Ejecuta el código en un proceso separado para limitar el tiempo de ejecución
+  '''
+  namespace = {"__builtins__": dict(BUILTINS_RESTRINGIDOS)}
+  try: 
+     exec(code, namespace)
+     behavior_func = namespace.get("behavior")
+     if not callable(behavior_func):
+         raise BehaviorValidationError("El código del comportamiento no define una función 'behavior' válida.")
+     player = FakePlayer()
+     behavior_func(player)
+  except Exception as e:
+    raise BehaviorValidationError(f"Error durante la ejecución del código: {e}")
 
 def validate(code: str):
   try:
       tree = ast.parse(code)
       validator = BehaviorValidator()
       validator.visit(tree)
+      if validator.behavior_functions == 0:
+        raise BehaviorValidationError("El código del comportamiento debe definir una función 'behavior'")
+
   except SyntaxError as e:
       raise BehaviorSyntaxError(f"Error de sintaxis en el código: {e}") 
+  # Ejecutar el código en un proceso separado para limitar el tiempo de ejecución
+  process = multiprocessing.Process(target=_execute_code, args=(code,))
+  process.start()
+
+  process.join(timeout=TIMEOUT_SECONDS)
+
+  if process.is_alive():
+    process.terminate()
+    process.join()
+    raise BehaviorTimeoutError("El código del comportamiento tardó demasiado en ejecutarse y fue terminado.")
+
+  if process.exitcode != 0: # El proceso terminó con un error
+    raise BehaviorValidationError("El código del comportamiento produjo un error durante la ejecución.")
