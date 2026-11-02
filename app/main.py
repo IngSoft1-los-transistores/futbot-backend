@@ -12,7 +12,7 @@ from app.behaviors.loader import precargar_preprogramados
 from app.core.config import settings
 from app.db.init_db import cargar_comportamientos_por_defecto, crear_tablas
 from app.db.session import SessionLocal, engine
-from app.routers import health, auth, behaviors, friendly_rooms, players, ws, matches
+from app.routers import health, auth, behaviors, friendly_rooms, players, ws, matches, leagues
 from app.ws.matches import router as match_stream_router
 from app.services.match_runner import stop_matches
 from app.services.match_recovery import recover_interrupted_friendly_matches
@@ -112,4 +112,5 @@ app.include_router(players.router)
 app.include_router(matches.router)
 
 app.include_router(match_stream_router)
-app.include_router(leagues.router) # Ligas
+
+app.include_router(leagues.router)
