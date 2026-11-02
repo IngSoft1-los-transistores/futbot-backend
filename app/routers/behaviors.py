@@ -36,17 +36,21 @@ def get_behaviors(
 
 @router.delete(
     "/behaviors/{behavior_id}",
-    response_model=list[BehaviorRead], # ???
-    status_code=status.HTTP_200_OK)
-
+    status_code=status.HTTP_204_NO_CONTENT
+    )
 def erase_behavior(
+    behavior_id: str,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-) -> list[BehaviorRead]: # ???
+    db: Session = Depends(get_db),
+) -> None:
     try:
         club_id = current_user.club.id
-        return erase_behavior_from_club(db, club_id)
+        erase_behavior_from_club(db, club_id, behavior_id)
+        return
+    except HTTPException as he:
+        raise he
     except SQLAlchemyError as e:
+        db.rollback()
         logger.error(f"Error al eliminar comportamiento: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
