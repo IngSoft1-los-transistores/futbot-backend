@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.user import User
 from app.core.dependencies import get_current_user
-from app.schemas.behaviors import BehaviorRead, BehaviorCreate
+from app.schemas.behaviors import BehaviorRead, BehaviorCreate, BehaviorUpdate
 from app.services import behavior_services
 from app.behaviors.validator import BehaviorValidationError
 
@@ -50,7 +50,7 @@ def create_behavior(
     except BehaviorValidationError as error:
         logger.warning(f"Error al crear comportamiento: {error}")
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(error)
         )
     except ValueError as error:
@@ -65,4 +65,31 @@ def create_behavior(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error al crear comportamiento"
+        )
+
+@router.put(
+        "/behaviors/{behavior_id}", 
+        response_model=BehaviorRead,
+        status_code=status.HTTP_200_OK)
+def update_behavior(
+    behavior_id: str,
+    data: BehaviorUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> BehaviorRead:
+    try:
+        club_id = current_user.club.id
+        updated_behavior = behavior_services.update_behavior(db, behavior_id, data, club_id)
+        return updated_behavior
+    except BehaviorValidationError as error:
+        logger.warning(f"Error al actualizar comportamiento: {error}")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(error)
+        )
+    except SQLAlchemyError as e:
+        logger.error(f"Error al actualizar comportamiento: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al actualizar comportamiento"
         )
