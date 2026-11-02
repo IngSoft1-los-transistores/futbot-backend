@@ -2,9 +2,11 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.core.dependencies import get_current_user
 from app.models.enrollment import Enrollment
 from app.models.room import Room, ROOM_STATUS_WAITING_GUEST, ROOM_STATUS_IN_PROGRESS, ROOM_STATUS_CANCELLED
 from app.models.club import Club
+from app.models.user import User
 from app.ws.manager import room_manager as manager
 from app.ws.manager import league_manager
 
@@ -62,6 +64,34 @@ async def league_waiting_room_ws(websocket: WebSocket,
 ):
     await websocket.accept()
 
+    # Validacion de sesion de usuario
+    token = websocket.query_params.get("token")
+    if not token:
+        auth_header = websocket.headers.get("authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+
+    # Validar usuario autenticado y coincidencia con el club_id
+    user = None
+    if token:
+        try:
+            from app.core.security import decode_access_token
+            from app.models.auth_session import AuthSession
+            from time import time
+            claims = decode_access_token(token)
+            session = db.get(AuthSession, claims.get("sid"))
+            if session and not session.revoked and session.expires_at > time():
+                user = db.get(User, claims.get("sub"))
+        except Exception:
+            pass
+
+    club_obj = db.get(Club, club_id) if club_id else None
+
+    if not user or not club_obj or club_obj.user_id != user.id:
+        await websocket.close(code=4008, reason="No autorizado o token invalido.")
+        db.close()
+        return
+
     # Validar que la liga exista en BD
     room = db.query(Room).filter(Room.id == league_id).first()
     if not room or room.status != ROOM_STATUS_WAITING_GUEST:
@@ -90,51 +120,73 @@ async def league_waiting_room_ws(websocket: WebSocket,
     # Registrar la conexion
     await league_manager.connect_waiting(league_id, club_id, websocket, room.max_clubs)
 
-    # Informacion detallada para el estado inicial
-    enrollments = db.query(Enrollment).filter(Enrollment.room_id == league_id).all()
-    incribed_clubs = [e.club_id for e in enrollments]
+    # Funcion auxiliar para generar el payload fresco
+    def get_room_payload():
+        db.expire_all()
+        enrollments = db.query(Enrollment).filter(Enrollment.room_id == league_id).all()
+        inscribed_clubs = [e.club_id for e in enrollments]
 
-    creator_club = db.query(Club).filter(Club.id == room.creator_club_id).first()
-    creator_name = creator_club.name if creator_club else "Desconocido"
+        creator_club = db.query(Club).filter(Club.id == room.creator_club_id).first()
+        creator_name = creator_club.name if creator_club else "Desconocido"
 
-    initial_data = {
-        "type": "room_info",
-        "league_id": room.id,
-        "league_name": room.name,
-        "creator_club_id": room.creator_club_id,
-        "creator_club_name": creator_name,
-        "inscribed_clubs": incribed_clubs,
-        "current_participants": len(incribed_clubs),
-        "min_clubs": room.min_clubs,
-        "max_clubs": room.max_clubs,
-        "status": room.status,
-        "can_start": len(incribed_clubs) >= room.min_clubs
-    }
+        return{
+            "type": "room_info",
+            "league_id": room.id,
+            "league_name": room.name,
+            "creator_club_id": room.creator_club_id,
+            "creator_club_name": creator_name,
+            "inscribed_clubs": inscribed_clubs,
+            "current_participants": len(inscribed_clubs),
+            "min_clubs": room.min_clubs,
+            "max_clubs": room.max_clubs,
+            "status": room.status,
+            "can_start": len(inscribed_clubs) >= room.min_clubs
+        }
 
+    initial_data = get_room_payload()
     db.close()
 
     # Envia informacion de sala al cliente conectado
     await websocket.send_json(initial_data)
 
     # Broadcast general cuando se une alguien
-    await league_manager.broadcast_waiting(league_id, {
-        "type": "club_joined_waiting",
-        "club_id": club_id,
-        "current_count": league_manager.get_rooms_user_count(league_id)
-    })
+    await league_manager.broadcast_waiting(league_id, get_room_payload())
 
     try:
         while True:
             data = await websocket.receive_json()
             action = data.get("action")
 
-            # Acciones del creador, hay validar que el usuario sea creador
-            if action in ["start_league", "cancel_league"]:
-                bind = db.get_bind()
-                with Session(bind) as action_db:
-                    current_room = action_db.query(Room).filter(Room.id == league_id).first()
+            bind = db.get_bind()
+            # Acciones
+            with Session(bind) as action_db:
+                current_room = action_db.query(Room).filter(Room.id == league_id).first()
 
-                    # Validar existencia de liga
+                if action == "leave_room":
+                    # Abandono de liga para clubs que no son el creador
+                    if current_room and club_id == current_room.creator_club_id:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "El creador no puede abandonar la liga, debe cancelarla."
+                        })
+                        continue
+
+                    enrollment_to_delete = action_db.query(Enrollment).filter(
+                        Enrollment.room_id == league_id,
+                        Enrollment.club_id == club_id
+                    ).first()
+
+                    if enrollment_to_delete:
+                        action_db.delete(enrollment_to_delete)
+                        action_db.commit()
+
+                    # Notificar el abandono
+                    updated_payload = get_room_payload()
+                    await league_manager.broadcast_waiting(league_id, updated_payload)
+                    await websocket.close(code=1000)
+                    break
+
+                elif action in ["start_league", "cancel_league"]:
                     if not current_room:
                         await websocket.send_json({
                             "type": "error",
@@ -142,7 +194,6 @@ async def league_waiting_room_ws(websocket: WebSocket,
                         })
                         continue
 
-                    # Validar que el usuario sea creador
                     if club_id != current_room.creator_club_id:
                         await websocket.send_json({
                             "type": "error",
@@ -150,9 +201,8 @@ async def league_waiting_room_ws(websocket: WebSocket,
                         })
                         continue
 
-                    # Inicio de liga
+                    # Inicio de Liga
                     if action == "start_league":
-                        # Validar numero de participantes desde la DB
                         current_participants = action_db.query(Enrollment).filter(Enrollment.room_id == league_id).count()
                         if current_participants < current_room.min_clubs:
                             await websocket.send_json({
@@ -161,23 +211,18 @@ async def league_waiting_room_ws(websocket: WebSocket,
                             })
                             continue
 
-                        # Marcar la sala como iniciada en DB
                         current_room.status = ROOM_STATUS_IN_PROGRESS
                         action_db.commit()
 
-                        # Avisar a los usuarios de la redireccion
                         await league_manager.broadcast_waiting(league_id, {
                             "type": "league_started",
                             "redirect_url": f"/league/{league_id}/active"
                         })
 
-                    # Cancelacion de liga
                     elif action == "cancel_league":
-                        # Marcar la liga como cancelada en DB
                         current_room.status = ROOM_STATUS_CANCELLED
                         action_db.commit()
-
-                        # Avisar a todos los usuarios de la redireccion a homepage
+                        
                         await league_manager.broadcast_waiting(league_id, {
                             "type": "league_cancelled",
                             "redirect_url": "/home"
@@ -186,9 +231,21 @@ async def league_waiting_room_ws(websocket: WebSocket,
     except WebSocketDisconnect:
         league_manager.disconnect_waiting(league_id, club_id)
         
-        # Avisar a todos los usuarios de la desconexion
-        await league_manager.broadcast_waiting(league_id, {
-            "type": "club_left_waiting",
-            "club_id": club_id,
-            "current_count": league_manager.get_rooms_user_count(league_id)
-        })
+        bind = db.get_bind()
+        with Session(bind) as action_db:
+            # Reconstruccion de payload por desconexion
+            enrollments = action_db.query(Enrollment).filter(Enrollment.room_id == league_id).all()
+            inscribed_clubs = [e.club_id for e in enrollments]
+            payload_disc = {
+                "type": "room_info",
+                "league_id": room.id,
+                "league_name": room.name,
+                "creator_club_id": room.creator_club_id,
+                "inscribed_clubs": inscribed_clubs,
+                "current_participants": len(inscribed_clubs),
+                "min_clubs": room.min_clubs,
+                "max_clubs": room.max_clubs,
+                "status": room.status,
+                "can_start": len(inscribed_clubs) >= room.min_clubs
+            }
+            await league_manager.broadcast_waiting(league_id, payload_disc)

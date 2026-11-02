@@ -1,12 +1,16 @@
 """Pruebas para el WebSocket del lobby de espera de una liga."""
 import uuid
+import time
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
+from starlette.websockets import WebSocketDisconnect
 
 from app.models.user import User
 from app.models.club import Club
 from app.models.enrollment import Enrollment
+from app.models.auth_session import AuthSession
+from app.core.security import create_access_token
 from app.models.room import (
     ROOM_STATUS_CANCELLED,
     ROOM_STATUS_IN_PROGRESS,
@@ -29,6 +33,24 @@ def crear_club_con_usuario(db: Session, nombre: str) -> Club:
     db.add(nuevo_club)
     db.commit()
     return nuevo_club
+
+
+def get_auth_token_for_user(db: Session, club: Club) -> dict:
+    """Genera una sesión activa y un token JWT válido para autenticar el WebSocket en los tests."""
+    user = db.get(User, club.user_id)
+    session_id = str(uuid.uuid4())
+    session = AuthSession(
+        id=session_id,
+        user_id=user.id,
+        refresh_hash="dummy-refresh-hash",
+        expires_at=time.time() + 3600,
+        revoked=False
+    )
+    db.add(session)
+    db.commit()
+    
+    token = create_access_token(user.id, session_id)
+    return token
 
 
 @pytest.fixture
@@ -59,7 +81,8 @@ def test_league(db: Session, club: Club) -> Room:
 
 def test_ws_connection_success(client: TestClient, db: Session, test_league: Room, club: Club):
     """Verifica que un usuario inscripto pueda conectarse y reciba la información inicial de la sala."""
-    with client.websocket_connect(f"/ws/league/{test_league.id}/waiting?club_id={club.id}") as websocket:
+    token = get_auth_token_for_user(db, club)
+    with client.websocket_connect(f"/ws/league/{test_league.id}/waiting?club_id={club.id}&token={token}") as websocket:
         data = websocket.receive_json()
         
         assert data["type"] == "room_info"
@@ -77,10 +100,11 @@ def test_ws_connection_reject_not_enrolled(client: TestClient, db: Session, test
     """Verifica que se rechace la conexión si el club no está inscripto en la liga."""
     fake_club_id = str(uuid.uuid4())
 
-    # Al conectar con un club no inscripto, el endpoint cierra el socket con un código de política/error
-    with client.websocket_connect(f"/ws/league/{test_league.id}/waiting?club_id={fake_club_id}") as websocket:
-        with pytest.raises(Exception):
+    with pytest.raises(WebSocketDisconnect) as excinfo:
+        with client.websocket_connect(f"/ws/league/{test_league.id}/waiting?club_id={fake_club_id}") as websocket:
             websocket.receive_json()
+
+    assert excinfo.value.code in [4008, 4403, 1008]
 
 
 def test_ws_creator_starts_league(client: TestClient, db: Session, test_league: Room, club: Club):
@@ -93,7 +117,8 @@ def test_ws_creator_starts_league(client: TestClient, db: Session, test_league: 
     db.add(Enrollment(room_id=test_league.id, club_id=third_club.id))
     db.commit()
 
-    with client.websocket_connect(f"/ws/league/{test_league.id}/waiting?club_id={club.id}") as websocket:
+    token = get_auth_token_for_user(db, club)
+    with client.websocket_connect(f"/ws/league/{test_league.id}/waiting?club_id={club.id}&token={token}") as websocket:
         # 1. Consumir mensaje inicial de room_info
         websocket.receive_json()
 
@@ -115,7 +140,8 @@ def test_ws_creator_starts_league(client: TestClient, db: Session, test_league: 
 
 def test_ws_creator_cancels_league(client: TestClient, db: Session, test_league: Room, club: Club):
     """Verifica que el creador pueda cancelar la liga y se notifique la redirección al home."""
-    with client.websocket_connect(f"/ws/league/{test_league.id}/waiting?club_id={club.id}") as websocket:
+    token = get_auth_token_for_user(db, club)
+    with client.websocket_connect(f"/ws/league/{test_league.id}/waiting?club_id={club.id}&token={token}") as websocket:
         # Consumir mensaje inicial de room_info
         websocket.receive_json()
 
