@@ -33,6 +33,31 @@ def get_behaviors(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error al obtener comportamientos"
         )
+@router.get(
+        "/behaviors/{behavior_id}",
+        response_model=BehaviorRead,
+        status_code=status.HTTP_200_OK)
+def get_behavior(
+    behavior_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> BehaviorRead:
+    try:
+        club_id = current_user.club.id
+        behavior = behavior_services.get_behavior_by_id(db, behavior_id, club_id)
+        if not behavior:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Comportamiento no encontrado"
+            )
+        return behavior
+    except SQLAlchemyError as e:
+        logger.error(f"Error al obtener comportamiento: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al obtener comportamiento"
+        )
+
 @router.post(
         "/behaviors", 
         response_model=BehaviorRead,
