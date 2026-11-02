@@ -52,10 +52,16 @@ def test_token_vigente_devuelve_el_usuario() -> None:
     assert get_user_from_token(FakeDb(valid_session(), USER), "token") is USER
 
 
-@pytest.mark.parametrize("token", [None, ""])
-def test_sin_token_devuelve_none(token) -> None:
+@pytest.mark.parametrize("token", [None, "", 123, 1.5, True, ["token"], {"token": "x"}])
+def test_un_token_que_no_es_texto_o_esta_vacio_devuelve_none(token) -> None:
     assert get_user_from_token(FakeDb(valid_session(), USER), token) is None
 
+def test_un_token_que_no_es_texto_no_llega_a_decodificarse(monkeypatch) -> None:
+    llamadas = []
+    monkeypatch.setattr(dependencies, "decode_access_token", lambda token: llamadas.append(token))
+
+    assert get_user_from_token(FakeDb(valid_session(), USER), 123) is None
+    assert llamadas == []
 
 def test_token_que_no_se_puede_decodificar_devuelve_none(monkeypatch) -> None:
     def broken(token):

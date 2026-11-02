@@ -17,7 +17,7 @@ bearer = HTTPBearer(auto_error=False)
 
 def get_user_from_token(db: Session, token: str | None) -> User | None:
     """Devuelve el usuario dueño de un access token vigente, o None si no es válido."""
-    if not token:
+    if not isinstance(token, str) or not token:
         return None
     try:
         claims = decode_access_token(token)

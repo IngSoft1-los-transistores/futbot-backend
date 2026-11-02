@@ -78,6 +78,16 @@ def test_un_primer_mensaje_que_no_es_auth_cierra_con_4401(client: TestClient, to
 
     assert error.value.code == 4401
 
+@pytest.mark.parametrize("token", [123, None, ["x"], {"a": 1}, True])
+def test_un_token_que_no_es_texto_cierra_con_4401(client: TestClient, token) -> None:
+    with pytest.raises(WebSocketDisconnect) as error:
+        with client.websocket_connect(URL) as ws:
+            ws.send_json({"type": "auth", "token": token})
+            ws.receive_json()
+
+    assert error.value.code == 4401
+    assert len(leagues_hub.filters) == 0
+
 
 # --- Listado inicial ---
 
