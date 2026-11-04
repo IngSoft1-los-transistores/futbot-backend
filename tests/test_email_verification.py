@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+import smtplib
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlsplit
 
@@ -123,6 +124,19 @@ def test_failed_delivery_preserves_account_and_allows_resend(client, db, email_s
     email_sender.fail = False
     assert resend(client).status_code == 200
     assert verify(client, sent_token(email_sender)).status_code == 200
+
+
+def test_delivery_error_logs_code_without_secrets(client, email_sender, monkeypatch, caplog):
+    def fail(email, url):
+        raise smtplib.SMTPDataError(554, f"private-provider-message {email} {url}".encode())
+
+    monkeypatch.setattr(email_sender, "send_verification", fail)
+    register(client)
+    assert "SMTPDataError" in caplog.text
+    assert "554" in caplog.text
+    assert "private-provider-message" not in caplog.text
+    assert PAYLOAD["email"] not in caplog.text
+    assert "token=" not in caplog.text
 
 
 def test_email_sent_only_after_commit(client, engine, email_sender, monkeypatch):

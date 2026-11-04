@@ -1,4 +1,5 @@
 import logging
+import smtplib
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from secrets import token_urlsafe
@@ -61,9 +62,18 @@ def issue_verification(db: Session, user: User, sender: EmailSender) -> None:
     url = urlunsplit(parts._replace(query=urlencode(query + [("token", token)])))
     try:
         sender.send_verification(email, url)
-    except Exception:
-        # No registrar la excepción: algunos proveedores incluyen el mensaje/token.
-        logger.warning("No se pudo enviar el correo de verificación")
+    except Exception as error:
+        # No incluir el texto de la excepción, destinatarios, credenciales ni tokens.
+        codes = []
+        if isinstance(error, smtplib.SMTPResponseException):
+            codes = [error.smtp_code]
+        elif isinstance(error, smtplib.SMTPRecipientsRefused):
+            codes = [response[0] for response in error.recipients.values()]
+        safe_codes = sorted({code for code in codes if isinstance(code, int)})
+        logger.warning(
+            "No se pudo enviar el correo de verificación (tipo=%s, códigos SMTP=%s)",
+            type(error).__name__, safe_codes,
+        )
 
 
 def verify_email(db: Session, token: str) -> dict[str, str]:
