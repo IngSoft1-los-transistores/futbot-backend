@@ -144,8 +144,9 @@ class LeagueRoomManager:
             if not self.waiting_rooms[league_id]:
                 del self.waiting_rooms[league_id]
 
-    async def broadcast_waiting(self, league_id: str, message: dict):
-        for ws in list(self.waiting_rooms.get(league_id, {}).values()):
-            await ws.send_json(message)
+    async def broadcast_waiting(self, league_id: str, message: dict, exclude_club_id: str = None):
+        for club_id, ws in list(self.waiting_rooms.get(league_id, {}).items()):
+            if club_id != exclude_club_id:
+                await ws.send_json(message)
 
 league_manager= LeagueRoomManager()

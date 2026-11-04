@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.core.dependencies import get_current_user
 from app.models.enrollment import Enrollment
 from app.models.room import Room, ROOM_STATUS_WAITING_GUEST, ROOM_STATUS_IN_PROGRESS, ROOM_STATUS_CANCELLED
 from app.models.club import Club
@@ -121,37 +120,45 @@ async def league_waiting_room_ws(websocket: WebSocket,
     await league_manager.connect_waiting(league_id, club_id, websocket, room.max_clubs)
 
     # Funcion auxiliar para generar el payload fresco
-    def get_room_payload():
-        db.expire_all()
-        enrollments = db.query(Enrollment).filter(Enrollment.room_id == league_id).all()
+    def get_room_payload(session: Session):
+        r = session.query(Room).filter(Room.id == league_id).first()
+        if not r:
+            return None
+        enrollments = session.query(Enrollment).filter(Enrollment.room_id == league_id).all()
         inscribed_clubs = [e.club_id for e in enrollments]
 
-        creator_club = db.query(Club).filter(Club.id == room.creator_club_id).first()
-        creator_name = creator_club.name if creator_club else "Desconocido"
+        creator_name = session.query(Club.name).filter(Club.id == r.creator_club_id).scalar() or "Desconocido"
 
         return{
             "type": "room_info",
-            "league_id": room.id,
-            "league_name": room.name,
-            "creator_club_id": room.creator_club_id,
+            "league_id": r.id,
+            "league_name": r.name,
+            "creator_club_id": r.creator_club_id,
             "creator_club_name": creator_name,
             "inscribed_clubs": inscribed_clubs,
             "current_participants": len(inscribed_clubs),
-            "min_clubs": room.min_clubs,
-            "max_clubs": room.max_clubs,
-            "status": room.status,
-            "can_start": len(inscribed_clubs) >= room.min_clubs
+            "min_clubs": r.min_clubs,
+            "max_clubs": r.max_clubs,
+            "status": r.status,
+            "can_start": len(inscribed_clubs) >= r.min_clubs
         }
 
-    initial_data = get_room_payload()
+    initial_data = get_room_payload(db)
     db.close()
 
-    # Envia informacion de sala al cliente conectado
-    await websocket.send_json(initial_data)
+    if initial_data:
+        # Envia informacion inicial al cliente conectado
+        await websocket.send_json(initial_data)
 
-    # Broadcast general cuando se une alguien
-    await league_manager.broadcast_waiting(league_id, get_room_payload())
+        # Notificar a los demas que un club se unio
+        await league_manager.broadcast_waiting(league_id, {
+            "type": "club_joined_waiting",
+            "club_id": club_id,
+            "current_participants": initial_data["current_participants"]
+        }, exclude_club_id=club_id)
 
+
+    
     try:
         while True:
             data = await websocket.receive_json()
@@ -161,6 +168,19 @@ async def league_waiting_room_ws(websocket: WebSocket,
             # Acciones
             with Session(bind) as action_db:
                 current_room = action_db.query(Room).filter(Room.id == league_id).first()
+
+                # Validacion de estado de la liga
+                if not current_room or current_room.status != ROOM_STATUS_WAITING_GUEST:
+                    redirect_url = f"/league/{league_id}/active" if current_room and current_room.status == ROOM_STATUS_IN_PROGRESS else "/home"
+                    event_type = "league_started" if current_room and current_room.status == ROOM_STATUS_IN_PROGRESS else "league_cancelled"
+
+                    await websocket.send_json({
+                        "type": event_type,
+                        "redirect_url": redirect_url
+                    })
+                    await websocket.close(code=1000)
+                    break
+
 
                 if action == "leave_room":
                     # Abandono de liga para clubs que no son el creador
@@ -180,8 +200,11 @@ async def league_waiting_room_ws(websocket: WebSocket,
                         action_db.delete(enrollment_to_delete)
                         action_db.commit()
 
+                    # Desconexion de sockets zombies
+                    league_manager.disconnect_waiting(league_id, club_id)
+
                     # Notificar el abandono
-                    updated_payload = get_room_payload()
+                    updated_payload = get_room_payload(action_db)
                     await league_manager.broadcast_waiting(league_id, updated_payload)
                     await websocket.close(code=1000)
                     break
@@ -230,22 +253,9 @@ async def league_waiting_room_ws(websocket: WebSocket,
 
     except WebSocketDisconnect:
         league_manager.disconnect_waiting(league_id, club_id)
-        
         bind = db.get_bind()
-        with Session(bind) as action_db:
+        with Session(bind) as disc_db:
             # Reconstruccion de payload por desconexion
-            enrollments = action_db.query(Enrollment).filter(Enrollment.room_id == league_id).all()
-            inscribed_clubs = [e.club_id for e in enrollments]
-            payload_disc = {
-                "type": "room_info",
-                "league_id": room.id,
-                "league_name": room.name,
-                "creator_club_id": room.creator_club_id,
-                "inscribed_clubs": inscribed_clubs,
-                "current_participants": len(inscribed_clubs),
-                "min_clubs": room.min_clubs,
-                "max_clubs": room.max_clubs,
-                "status": room.status,
-                "can_start": len(inscribed_clubs) >= room.min_clubs
-            }
-            await league_manager.broadcast_waiting(league_id, payload_disc)
+            payload_disc = get_room_payload(disc_db)
+            if payload_disc:
+                await league_manager.broadcast_waiting(league_id, payload_disc)
