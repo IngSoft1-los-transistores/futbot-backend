@@ -494,6 +494,25 @@ def test_a_squad_with_a_deleted_behavior_is_invalid(
     assert_invalid_squad_without_side_effects(client, ready_room, db)
 
 
+def test_start_error_names_whose_squad_is_invalid(
+    client: TestClient, login_as, club: Club, away_club: Club, ready_room: Room, db: Session
+) -> None:
+    player = db.scalars(select(Player).where(Player.club_id == away_club.id)).first()
+    player.deleted_at = utc_now()
+    db.commit()
+
+    login_as(club)
+    rival_view = client.post(start_url(ready_room.id))
+    login_as(away_club)
+    own_view = client.post(start_url(ready_room.id))
+
+    assert_error(rival_view, 400, "INVALID_SQUAD")
+    assert "club rival" in rival_view.json()["detail"]
+    assert "tu club" not in rival_view.json()["detail"]
+    assert_error(own_view, 400, "INVALID_SQUAD")
+    assert "Tu plantilla" in own_view.json()["detail"]
+
+
 # --- Behavior lock ---
 
 

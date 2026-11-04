@@ -26,6 +26,8 @@ from app.models.room import (
 from app.models.squad_entry import (
     ROLE_STARTER,
     ROLE_SUBSTITUTE,
+    STARTER_COUNT,
+    SUBSTITUTE_COUNT,
     SquadEntry,
 )
 from app.schemas.friendly_room import (
@@ -54,6 +56,16 @@ def _already_started() -> HTTPException:
         status.HTTP_400_BAD_REQUEST,
         "MATCH_ALREADY_STARTED",
         "El partido de esta sala ya fue iniciado",
+    )
+
+
+def _invalid_stored_squad(is_own: bool) -> HTTPException:
+    owner = "Tu plantilla" if is_own else "La plantilla del club rival"
+    return _error(
+        status.HTTP_400_BAD_REQUEST,
+        "INVALID_SQUAD",
+        f"{owner} no tiene {STARTER_COUNT} titulares y {SUBSTITUTE_COUNT} suplentes "
+        "con jugadores y comportamientos válidos",
     )
 
 
@@ -148,12 +160,16 @@ def start_friendly_match(db: Session, room_id: str, club: Club) -> Match:
     # SquadEntry no guarda club_id: cada entrada pertenece al club de su jugador.
     for club_id in club_ids:
         entries = [entry for entry, player, _behavior in rows if player.club_id == club_id]
-        validate_squad_selection(
-            db,
-            club_id,
-            [entry for entry in entries if entry.role == ROLE_STARTER],
-            [entry for entry in entries if entry.role == ROLE_SUBSTITUTE],
-        )
+        try:
+            validate_squad_selection(
+                db,
+                club_id,
+                [entry for entry in entries if entry.role == ROLE_STARTER],
+                [entry for entry in entries if entry.role == ROLE_SUBSTITUTE],
+            )
+        except HTTPException:
+            # El validador le habla a quien elige; acá la plantilla puede ser del otro club.
+            raise _invalid_stored_squad(is_own=club_id == club.id) from None
 
     home_club_id = room.creator_club_id
     (away_club_id,) = club_ids - {home_club_id}
