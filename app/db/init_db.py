@@ -2,8 +2,9 @@ import ast
 import logging
 from pathlib import Path
 
-from sqlalchemy import Engine, func, select
+from sqlalchemy import Engine, func, inspect, select, text
 from sqlalchemy.orm import Session
+
 # Importar `app.models` registra las tablas en `Base.metadata`. Sin este
 # import, `create_all()` no tendria nada que crear.
 from app.models.behavior import Behavior
@@ -24,6 +25,27 @@ def crear_tablas(engine: Engine) -> None:
     ya esta.
     """
     Base.metadata.create_all(bind=engine)
+    """revisar si es necesario, este bloque de codigo es para sumar filas a las tablas existentes sin eliminarlas ni perder datos"""
+    updates = (
+        ("rooms", "has_penalty_shootout", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        (
+            "matches",
+            "penalty_winner_club_id",
+            "VARCHAR(36) REFERENCES clubs(id)",
+        ),
+    )
+    with engine.begin() as connection:
+        for table_name, column_name, definition in updates:
+            existing_columns = {
+                column["name"] for column in inspect(connection).get_columns(table_name)
+            }
+            if column_name not in existing_columns:
+                connection.execute(
+                    text(
+                        f"ALTER TABLE {table_name} ADD COLUMN "
+                        f"{column_name} {definition}"
+                    )
+                )
 
 
 def _leer_comportamiento(archivo: Path) -> tuple[str, str]:

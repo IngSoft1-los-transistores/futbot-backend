@@ -9,9 +9,16 @@ from app.core.security import verify_password
 from app.models.behavior import Behavior
 from app.models.club import Club
 from app.models.enrollment import Enrollment
+from app.models.match import ESTADO_FINISHED, ESTADO_SCHEDULED, Match
 from app.models.player import Player
-from app.models.room import ROOM_STATUS_WAITING_GUEST, ROOM_TYPE_PRIVATE, Room
+from app.models.room import (
+    ROOM_STATUS_WAITING_GUEST,
+    ROOM_TYPE_PRIVATE,
+    ROOM_TYPE_PUBLIC,
+    Room,
+)
 from app.models.squad_entry import ROLE_STARTER, ROLE_SUBSTITUTE, SquadEntry
+from app.models.user import User
 from app.services.exceptions_league import (
     DuplicateLeagueName,
     DuplicatePlayer,
@@ -69,6 +76,7 @@ def test_create_league(
     assert room.creator_club_id == club.id
     assert room.status == ROOM_STATUS_WAITING_GUEST
     assert room.password_hash is None
+    assert room.has_penalty_shootout is False
 
     # Enrollment
     enrollments = db.scalars(select(Enrollment)).all()
@@ -82,6 +90,108 @@ def test_create_league(
     assert sum(entry.role == ROLE_SUBSTITUTE for entry in squad_entries) == 3
     # Los nombres del payload se tradujeron a los ids reales de los jugadores.
     assert {e.player_id for e in squad_entries} == {p.id for p in club_players}
+
+
+def test_create_league_with_penalty_shootout(
+    client, db, club_players, comportamiento_prueba, auth_headers
+):
+    payload = league_payload(
+        club_players, comportamiento_prueba, has_penalty_shootout=True
+    )
+    response = client.post("/api/leagues", headers=auth_headers, json=payload)
+
+    assert response.status_code == 201
+    assert response.json()["has_penalty_shootout"] is True
+    assert db.scalars(select(Room)).one().has_penalty_shootout is True
+
+
+def test_league_standings_score_regular_wins_penalties_and_draws(
+    client, db, club, other_club, auth_headers
+):
+    third_user = User(
+        username="third",
+        email="third@other.com",
+        password_hash="hash",
+    )
+    third_user.club = Club(name="Third Club")
+    db.add(third_user)
+    db.flush()
+    third_club = third_user.club
+
+    league = Room(
+        name="Standings League",
+        type=ROOM_TYPE_PUBLIC,
+        creator_club_id=club.id,
+        min_clubs=3,
+        max_clubs=4,
+        match_duration_minutes=90,
+        has_penalty_shootout=True,
+    )
+    db.add(league)
+    db.flush()
+    db.add_all(
+        Enrollment(room_id=league.id, club_id=club_id)
+        for club_id in (club.id, other_club.id, third_club.id)
+    )
+    db.add_all(
+        [
+            Match(
+                room_id=league.id,
+                home_club_id=club.id,
+                away_club_id=other_club.id,
+                status=ESTADO_FINISHED,
+                home_goals=2,
+                away_goals=1,
+                duration_seconds=5400,
+            ),
+            Match(
+                room_id=league.id,
+                home_club_id=other_club.id,
+                away_club_id=third_club.id,
+                status=ESTADO_FINISHED,
+                home_goals=1,
+                away_goals=1,
+                penalty_winner_club_id=other_club.id,
+                duration_seconds=5400,
+            ),
+            Match(
+                room_id=league.id,
+                home_club_id=club.id,
+                away_club_id=third_club.id,
+                status=ESTADO_FINISHED,
+                home_goals=0,
+                away_goals=0,
+                duration_seconds=5400,
+            ),
+            Match(
+                room_id=league.id,
+                home_club_id=third_club.id,
+                away_club_id=other_club.id,
+                status=ESTADO_SCHEDULED,
+                duration_seconds=5400,
+            ),
+        ]
+    )
+    db.commit()
+
+    response = client.get(
+        f"/api/leagues/{league.id}/standings", headers=auth_headers
+    )
+
+    assert response.status_code == 200
+    standings = {row["club_id"]: row for row in response.json()}
+    assert standings[club.id]["points"] == 4
+    assert standings[club.id]["matches_won"] == 1
+    assert standings[club.id]["matches_drawn"] == 1
+    assert standings[club.id]["matches_played"] == 2
+    assert standings[other_club.id]["points"] == 2
+    assert standings[other_club.id]["matches_won"] == 1
+    assert standings[other_club.id]["matches_lost"] == 1
+    assert standings[other_club.id]["matches_played"] == 2
+    assert standings[third_club.id]["points"] == 1
+    assert standings[third_club.id]["matches_drawn"] == 1
+    assert standings[third_club.id]["matches_lost"] == 1
+    assert standings[third_club.id]["matches_played"] == 2
 
 
 # min_clubs por debajo del mínimo permitido: 400 y no se guarda nada.
