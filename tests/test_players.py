@@ -30,6 +30,7 @@ def test_create_player_valid(client, db, club, user):
     player = db.scalar(select(Player).where(Player.name == "New Player"))
     assert player is not None
     assert player.club_id == club.id
+    assert response.json()["id"] == player.id
 
 
 def test_rejects_attribute_below_20(client, club, user):
