@@ -21,7 +21,14 @@ logger = logging.getLogger(__name__)
 
 
 class MatchEngine:
-    def __init__(self, state: MatchState, field, cfg, behavior_ids: dict[str, str], schedule: list[Segment] | None = None, rng: random.Random | None = None,
+    def __init__(self, 
+                 state: MatchState, 
+                 field, 
+                 cfg, 
+                 behavior_ids: dict[str, str], 
+                 schedule: list[Segment] | None = None, 
+                 rng: random.Random | None = None,
+                 controllable_player_ids: set[str] | None = None,
         on_finish: Callable[[MatchState], Awaitable[None]] | None = None,
         realtime: bool = True,) -> None:
         self.state = state
@@ -33,6 +40,7 @@ class MatchEngine:
             cfg.friendly_match_duration_seconds, cfg.match_tick_rate
         )
         self.rng = rng or random.Random()
+        self.controllable_player_ids = set(controllable_player_ids) if controllable_player_ids is not None else None
         self.on_finish = on_finish
         self.realtime = realtime          # False en tests: sin esperas
         self._segment_index = 0
@@ -48,6 +56,11 @@ class MatchEngine:
         # 1. Lanzar los bots que no estén ocupados del tick anterior
         launched: dict[str, asyncio.Future] = {}
         for p in self.state.players:
+            if (
+                self.controllable_player_ids is not None 
+                and p.id not in self.controllable_player_ids
+            ):
+                continue  # este jugador no es controlable por bots
             if p.id in self._busy:
                 continue                      # sigue colgado: acción nula
             fut = loop.run_in_executor(
@@ -66,6 +79,12 @@ class MatchEngine:
         # 3. Leer solo lo que terminó a tiempo
         actions: dict[str, Action] = {}
         for p in self.state.players:
+            if (
+                self.controllable_player_ids is not None 
+                and p.id not in self.controllable_player_ids
+            ):
+                actions[p.id] = NULL_ACTION
+                continue  # este jugador no es controlable por bots
             fut = launched.get(p.id)
             if fut is not None and fut.done() and not fut.cancelled() \
                     and fut.exception() is None:
