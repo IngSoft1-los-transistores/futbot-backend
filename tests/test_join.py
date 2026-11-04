@@ -23,6 +23,7 @@ from app.models.squad_entry import ROLE_STARTER, SquadEntry
 from app.models.user import User
 from app.services.squad_validator import validate_squad_selection
 from types import SimpleNamespace
+from uuid import uuid4
 
 """Tests de POST /api/friendly/rooms/{room_id}/join."""
 
@@ -305,12 +306,15 @@ def test_club_con_menos_de_6_jugadores_devuelve_400(
     comportamiento: Behavior,
 ) -> None:
     pocos = crear_jugadores(db, invitado.id, 5)   # El club solo tiene 5 (este test no usa el fixture jugadores)
+    # Con 5 propios, el sexto id no puede ser de su club.
+    unknown_player = SimpleNamespace(id=str(uuid4()))
     como(invitado.id)
 
-    r = client.post(url(sala.id), json=armar_body(pocos + pocos[:1], comportamiento))
+    r = client.post(url(sala.id), json=armar_body(pocos + [unknown_player], comportamiento))
 
     assert r.status_code == 400
-    assert r.json()["error_code"] == "INVALID_SQUAD"   # No hay 6 jugadores propios distintos
+    assert r.json()["error_code"] == "INVALID_SQUAD"
+    assert "jugador elegido no existe" in r.json()["detail"]
 
 
 def test_valida_la_seleccion_con_el_club_autenticado(
