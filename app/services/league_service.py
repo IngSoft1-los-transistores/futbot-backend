@@ -35,9 +35,18 @@ from app.services.exceptions_league import (
 
 STARTED_STATUSES = (ROOM_STATUS_IN_PROGRESS, ROOM_STATUS_FINISHED)
 
+
 def fold(text: str) -> str:
     """normaliza para comparar sin distinguir mayusculas"""
     return text.casefold()
+
+
+def filter_by_name(leagues: list[ListLeagueResponse], name: str | None) -> list[ListLeagueResponse]:
+    """Deja las ligas cuyo nombre contiene el texto, sin distinguir mayúsculas."""
+    needle = fold((name or "").strip())
+    if not needle:
+        return list(leagues)
+    return [league for league in leagues if needle in fold(league.name or "")]
 
 
 class LeagueService:
@@ -56,27 +65,24 @@ class LeagueService:
             select(Room, func.coalesce(counts.c.total, 0))
             .outerjoin(counts, counts.c.room_id == Room.id)      # una liga sin inscriptos cuenta 0
             .where(
-                Room.type.in_([ROOM_TYPE_PUBLIC, ROOM_TYPE_PRIVATE]),
+                Room.type == ROOM_TYPE_PUBLIC,                   # solo ligas públicas (ni privadas ni amistosos)
                 Room.status != ROOM_STATUS_CANCELLED,
             )
         )
-        rows = [(room, total) for room, total in self.db.execute(query).all()]
-
-        needle = fold((name or "").strip())
-        if needle:
-            rows = [(room, total) for room, total in rows if needle in fold(room.name or "")]
+        rows = list(self.db.execute(query).all())
         rows.sort(key=lambda row: (fold(row[0].name or ""), row[0].id))
 
-        return [
+        leagues = [
             ListLeagueResponse(
                 id=room.id,
                 name=room.name,
                 participants_count=total,
                 started=room.status in STARTED_STATUSES,
-                is_private=room.type == ROOM_TYPE_PRIVATE,
+                is_private=False,                                # el listado solo incluye públicas
             )
             for room, total in rows
         ]
+        return filter_by_name(leagues, name)
 
 
 MIN_LEAGUE_PASSWORD_LENGTH = 6
