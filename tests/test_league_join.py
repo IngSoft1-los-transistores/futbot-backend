@@ -1,4 +1,6 @@
 """Tests for POST /api/leagues/{league_id}/join."""
+from unittest.mock import MagicMock
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
@@ -20,6 +22,8 @@ from app.models.room import (
 )
 from app.models.squad_entry import ROLE_STARTER, ROLE_SUBSTITUTE, SquadEntry
 from app.models.user import User
+from app.ws.leagues_events import register_league_events
+from app.ws.leagues_hub import leagues_hub
 
 PASSWORD = "secreta"
 UNKNOWN_ID = "00000000-0000-0000-0000-000000000000"
@@ -121,6 +125,14 @@ def behavior(db: Session) -> Behavior:
     db.add(behavior)
     db.commit()
     return behavior
+
+
+@pytest.fixture
+def list_notice(monkeypatch) -> MagicMock:
+    register_league_events()
+    notice = MagicMock()
+    monkeypatch.setattr(leagues_hub, "notify_changed", notice)
+    return notice
 
 
 # --- Happy path ---
@@ -319,7 +331,7 @@ def test_invalid_player_returns_400(
     r = client.post(url(league.id), json=body, headers=auth_headers)
 
     assert r.status_code == 400
-    assert r.json()["error_code"] == "INVALID_SQUAD_PLAYERS"
+    assert r.json()["error_code"] == "INVALID_SQUAD"
     assert not is_enrolled(db, league.id, club.id)
 
 
@@ -341,7 +353,7 @@ def test_invalid_behavior_returns_400(
     r = client.post(url(league.id), json=body, headers=auth_headers)
 
     assert r.status_code == 400
-    assert r.json()["error_code"] == "INVALID_SQUAD_BEHAVIORS"
+    assert r.json()["error_code"] == "INVALID_SQUAD"
     assert not is_enrolled(db, league.id, club.id)
 
 
@@ -367,6 +379,39 @@ def test_wrong_squad_size_returns_422(
     r = client.post(url(league.id), json=body, headers=auth_headers)
 
     assert r.status_code == 422
+
+
+# --- League list notice ---
+
+
+def test_join_refreshes_the_league_list_once(
+    client: TestClient, auth_headers, league: Room, players: list[Player], behavior: Behavior,
+    list_notice: MagicMock,
+) -> None:
+    league_id, body = league.id, squad_body(players, behavior)
+    list_notice.reset_mock()
+
+    r = client.post(url(league_id), json=body, headers=auth_headers)
+
+    assert r.status_code == 200
+    list_notice.assert_called_once()
+
+
+def test_join_rejected_after_the_lock_does_not_refresh_the_league_list(
+    client: TestClient, db: Session, auth_headers, creator: Club,
+    players: list[Player], behavior: Behavior, list_notice: MagicMock,
+) -> None:
+    league = make_league(db, creator, max_clubs=3)
+    for name in ("rival1", "rival2"):
+        db.add(Enrollment(room_id=league.id, club_id=make_club(db, name).id))
+    db.commit()
+    league_id, body = league.id, squad_body(players, behavior)
+    list_notice.reset_mock()
+
+    r = client.post(url(league_id), json=body, headers=auth_headers)
+
+    assert r.json()["error_code"] == "LEAGUE_FULL"
+    list_notice.assert_not_called()
 
 
 # --- Auth ---

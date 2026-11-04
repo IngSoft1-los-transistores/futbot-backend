@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.db.base import ahora_utc
 from app.engine.live_state import match_states
 from app.models.goal import Goal
-from app.models.match import ESTADO_IN_PROGRESS, ESTADO_PAUSED, Match
+from app.models.match import ESTADO_PRE_MATCH, ESTADO_IN_PROGRESS, ESTADO_PAUSED, Match
 from app.models.match_player import MatchPlayer
 from app.models.player import Player
 from app.models.room import Room
@@ -88,7 +88,7 @@ def publish_engine_tick(db: Session, match_id: str, tick: MatchTick, *, expected
                         .where(
                             MatchPlayer.player_id == Player.id,
                             MatchPlayer.match_id != match_id,
-                            Match.status.in_((ESTADO_IN_PROGRESS, ESTADO_PAUSED)),
+                            Match.status.in_((ESTADO_PRE_MATCH, ESTADO_IN_PROGRESS, ESTADO_PAUSED)),
                         )
                     )
                     db.execute(
@@ -148,7 +148,7 @@ class PlayerState:
 class BallState:
     pos: Vec2
     vel: Vec2 = field(default_factory=Vec2)
-    owner_id: int | None = None   # quién la controla, None si está libre
+    owner_id: str | None = None   # quién la controla, None si está libre
     last_kicker_id: str | None = None
     cooldown_ticks: int = 0  
     
