@@ -8,24 +8,31 @@ from app.core.security import hash_password
 from app.models.behavior import Behavior
 from app.models.club import Club
 from app.models.enrollment import Enrollment
+from app.models.match import ESTADO_FINISHED, Match
 from app.models.player import Player
 from app.models.room import (
     MAX_LEAGUE_CLUBS,
     MIN_LEAGUE_CLUBS,
-    Room,
-    ROOM_TYPE_PUBLIC,
-    ROOM_TYPE_PRIVATE,
     ROOM_STATUS_CANCELLED,
-    ROOM_STATUS_IN_PROGRESS,
     ROOM_STATUS_FINISHED,
+    ROOM_STATUS_IN_PROGRESS,
+    ROOM_TYPE_PRIVATE,
+    ROOM_TYPE_PUBLIC,
+    Room,
 )
 from app.models.squad_entry import ROLE_STARTER, ROLE_SUBSTITUTE, SquadEntry
-from app.schemas.league import LeagueResponse, ListLeagueResponse, CreateLeague
+from app.schemas.league import (
+    CreateLeague,
+    LeagueResponse,
+    LeagueStanding,
+    ListLeagueResponse,
+)
 from app.services.exceptions_league import (
     DuplicateLeagueName,
     DuplicatePlayer,
     InvalidBehavior,
     InvalidLeaguePassword,
+    LeagueNotFound,
     MaxClubsBelowMin,
     MaxClubsTooHigh,
     MinClubsTooLow,
@@ -113,6 +120,7 @@ def create_league(db: Session, data: CreateLeague, creator_club: Club) -> League
             match_duration_minutes=data.match_duration,
             code=_generate_unique_code(db),
             creator_club_id=creator_club.id,
+            has_penalty_shootout=data.has_penalty_shootout,
         )
         db.add(room)
         # Flush para obtener room.id antes de crear el enrollment y la escuadra.
@@ -148,6 +156,7 @@ def create_league(db: Session, data: CreateLeague, creator_club: Club) -> League
             id=room.id,
             name=room.name,
             is_private=room.type == ROOM_TYPE_PRIVATE,
+            has_penalty_shootout=room.has_penalty_shootout,
             started=False,
             creator_id=room.creator_club_id,
             code_to_join=room.code,
@@ -159,6 +168,99 @@ def create_league(db: Session, data: CreateLeague, creator_club: Club) -> League
     except Exception:
         db.rollback()
         raise
+
+
+def get_league_standings(db: Session, league_id: str) -> list[LeagueStanding]:
+    room = db.scalar(
+        select(Room).where(
+            Room.id == league_id,
+            Room.type.in_((ROOM_TYPE_PUBLIC, ROOM_TYPE_PRIVATE)),
+        )
+    )
+    if room is None:
+        raise LeagueNotFound()
+
+    club_rows = db.execute(
+        select(Club).join(Enrollment, Enrollment.club_id == Club.id).where(
+            Enrollment.room_id == room.id
+        )
+    ).scalars()
+    stats = {
+        club.id: {
+            "club_id": club.id,
+            "club_name": club.name,
+            "points": 0,
+            "matches_played": 0,
+            "matches_won": 0,
+            "matches_drawn": 0,
+            "matches_lost": 0,
+            "goals_for": 0,
+            "goals_against": 0,
+        }
+        for club in club_rows
+    }
+
+    matches = db.scalars(
+        select(Match).where(
+            Match.room_id == room.id,
+            Match.status == ESTADO_FINISHED,
+        )
+    )
+    for match in matches:
+        home = stats[match.home_club_id]
+        away = stats[match.away_club_id]
+        home["matches_played"] += 1
+        away["matches_played"] += 1
+        home["goals_for"] += match.home_goals
+        home["goals_against"] += match.away_goals
+        away["goals_for"] += match.away_goals
+        away["goals_against"] += match.home_goals
+
+        if match.home_goals == match.away_goals:
+            penalty_winner = (
+                match.penalty_winner_club_id
+                if room.has_penalty_shootout
+                else None
+            )
+            if penalty_winner == match.home_club_id:
+                home["points"] += 2
+                home["matches_won"] += 1
+                away["matches_lost"] += 1
+            elif penalty_winner == match.away_club_id:
+                away["points"] += 2
+                away["matches_won"] += 1
+                home["matches_lost"] += 1
+            else:
+                home["points"] += 1
+                away["points"] += 1
+                home["matches_drawn"] += 1
+                away["matches_drawn"] += 1
+        elif match.home_goals > match.away_goals:
+            home["points"] += 3
+            home["matches_won"] += 1
+            away["matches_lost"] += 1
+        else:
+            away["points"] += 3
+            away["matches_won"] += 1
+            home["matches_lost"] += 1
+
+    standings = [
+        LeagueStanding(
+            **row,
+            goal_difference=row["goals_for"] - row["goals_against"],
+        )
+        for row in stats.values()
+    ]
+    return sorted(
+        standings,
+        key=lambda row: (
+            -row.points,
+            -row.goal_difference,
+            -row.goals_for,
+            row.club_name.casefold(),
+            row.club_id,
+        ),
+    )
 
 
 # Falla si ya existe una liga con ese nombre (sin distinguir mayúsculas).

@@ -1,6 +1,8 @@
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
+
 from app.models.squad_entry import STARTER_COUNT, SUBSTITUTE_COUNT
+
 
 class SquadSelection(BaseModel):
     player_id: str
@@ -10,6 +12,7 @@ class SquadSelection(BaseModel):
 class CreateLeague(BaseModel):
     name: str
     is_private: bool = False
+    has_penalty_shootout: bool = False
     password: str | None = None
     min_clubs: int = Field(gt=0)
     max_clubs: int = Field(gt=0)
@@ -27,6 +30,7 @@ class LeagueResponse(BaseModel):
     id: str
     name: str
     is_private: bool
+    has_penalty_shootout: bool
     started: bool
     creator_id: str
     code_to_join: str
@@ -40,3 +44,16 @@ class ListLeagueResponse(BaseModel):
     participants_count: int
     started: bool
     is_private: bool
+
+
+class LeagueStanding(BaseModel):
+    club_id: str
+    club_name: str
+    points: int
+    matches_played: int
+    matches_won: int
+    matches_drawn: int
+    matches_lost: int
+    goals_for: int
+    goals_against: int
+    goal_difference: int

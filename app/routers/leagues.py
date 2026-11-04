@@ -1,13 +1,23 @@
-from fastapi import APIRouter, Depends, Query, status, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_user, get_current_club
+from app.core.dependencies import get_current_club, get_current_user
 from app.db.session import get_db
-from app.models.user import User
 from app.models.club import Club
-from app.schemas.league import LeagueResponse, CreateLeague, ListLeagueResponse
+from app.models.user import User
+from app.schemas.league import (
+    CreateLeague,
+    LeagueResponse,
+    LeagueStanding,
+    ListLeagueResponse,
+)
+from app.services.exceptions_league import LeagueNotFound
 from app.services.exceptions_player import AppException
-from app.services.league_service import LeagueService, create_league
+from app.services.league_service import (
+    LeagueService,
+    create_league,
+    get_league_standings,
+)
 
 router = APIRouter(
     prefix="/api",
@@ -40,3 +50,20 @@ def crear_liga_endpoint(
         return league
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
+
+
+@router.get(
+    "/leagues/{league_id}/standings",
+    response_model=list[LeagueStanding],
+    status_code=status.HTTP_200_OK,
+    summary="Consultar la tabla de posiciones de una liga",
+)
+def league_standings(
+    league_id: str,
+    _current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[LeagueStanding]:
+    try:
+        return get_league_standings(db, league_id)
+    except LeagueNotFound as error:
+        raise HTTPException(status_code=404, detail=error.message) from error

@@ -8,6 +8,7 @@ from sqlalchemy import (
     Index,
     SmallInteger,
     String,
+    false,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -112,6 +113,10 @@ class Room(Base):
 
     # En minutos.
     match_duration_minutes: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+
+    has_penalty_shootout: Mapped[bool] = mapped_column(
+        nullable=False, default=False, server_default=false()
+    )
 
     status: Mapped[str] = mapped_column(
         String(15), nullable=False, default=ROOM_STATUS_WAITING_GUEST
