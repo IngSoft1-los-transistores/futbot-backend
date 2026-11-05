@@ -724,7 +724,6 @@ def test_create_friendly_room_integration_success(
     assert response.status_code == 201
     data = response.json()
     assert "room_id" in data
-    assert "room_code" in data
     assert data["status"] == "waitingGuest"
     assert data["home_club"] == str(club.id)
 

@@ -5,7 +5,7 @@ from collections import namedtuple
 
 FakePlayerRow = namedtuple("FakePlayerRow", ["name", "id"])
 
-from app.services.friendly_service import FriendlyService, generate_room_code
+from app.services.friendly_service import FriendlyService
 from app.schemas.friendly_room import CreateFriendlyRoomRequest, PlayerSelection, RoomStatus
 from app.models.squad_entry import STARTER_COUNT, SUBSTITUTE_COUNT
 
@@ -144,8 +144,7 @@ def test_validate_invalid_behaviors(mock_db, valid_payload):
 
 # ─── TESTS UNITARIOS DE CREACIÓN DE SALA (CREATE_ROOM) ───
 
-@patch("app.services.friendly_service.generate_room_code", return_value="ROOM12")
-def test_create_room_unit_success(mock_code, mock_db, valid_payload):
+def test_create_room_unit_success(mock_db, valid_payload):
     """Verifica que create_room cree y persista los objetos en la DB correctamente."""
     service = FriendlyService(mock_db)
     
@@ -178,14 +177,5 @@ def test_create_room_unit_success(mock_code, mock_db, valid_payload):
 
     # 3. Validar respuesta del servicio
     assert result.room_id == "room-uuid-123"
-    assert result.room_code == "ROOM12"
     assert result.status == RoomStatus.WAITING_GUEST.value
     assert result.home_club == club_id
-
-
-def test_generate_room_code_format():
-    """Prueba unitaria auxiliar para la función generadora de códigos."""
-    code = generate_room_code(length=6)
-    assert len(code) == 6
-    assert code.isalnum()
-    assert code.isupper()

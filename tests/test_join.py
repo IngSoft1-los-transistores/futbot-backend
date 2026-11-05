@@ -63,12 +63,9 @@ def crear_sala(db: Session, creator_club_id: str) -> Room:
     db.commit()
     return sala
 
-CODIGO = "ABC123"
-
-def armar_body(jugadores: list[Player], comportamiento: Behavior, code: str = CODIGO) -> dict:
+def armar_body(jugadores: list[Player], comportamiento: Behavior) -> dict:
     seleccion = lambda j: {"playerId": j.id, "behaviorId": comportamiento.id}
     return {
-        "code": code,
         "titulares": [seleccion(j) for j in jugadores[:3]],
         "suplentes": [seleccion(j) for j in jugadores[3:6]],
     }
@@ -241,62 +238,6 @@ def test_sala_iniciada_devuelve_409(
 
     assert r.status_code == 409
 
-# --- Codigo de sala (contrasena) ---
-
-
-def test_codigo_incorrecto_devuelve_404_y_no_une_a_la_sala(
-    client: TestClient, db: Session, como, sala: Room, invitado: Club,
-    jugadores: list[Player], comportamiento: Behavior, validacion: MagicMock,
-) -> None:
-    sala_id = sala.id
-    como(invitado.id)
-
-    r = client.post(url(sala_id), json=armar_body(jugadores, comportamiento, code="ZZZZZZ"))
-
-    assert r.status_code == 404
-    db.expire_all()
-    assert db.get(Room, sala_id).status == ROOM_STATUS_WAITING_GUEST   # La sala sigue abierta
-    assert db.query(Enrollment).filter_by(room_id=sala_id).count() == 1
-    validacion.assert_not_called()   # Ni siquiera se llega a validar jugadores
-
-
-def test_codigo_en_minusculas_es_valido(
-    client: TestClient, como, sala: Room, invitado: Club,
-    jugadores: list[Player], comportamiento: Behavior,
-) -> None:
-    como(invitado.id)
-
-    r = client.post(url(sala.id), json=armar_body(jugadores, comportamiento, code=" abc123 "))
-
-    assert r.status_code == 200   # Se normaliza: sin espacios y en mayusculas
-
-
-def test_payload_sin_codigo_devuelve_error_de_validacion(
-    client: TestClient, como, sala: Room, invitado: Club,
-    jugadores: list[Player], comportamiento: Behavior,
-) -> None:
-    como(invitado.id)
-    body = armar_body(jugadores, comportamiento)
-    del body["code"]
-
-    r = client.post(url(sala.id), json=body)
-
-    assert r.status_code == 422
-
-
-def test_codigo_incorrecto_no_revela_si_la_sala_esta_completa(
-    client: TestClient, db: Session, como, sala: Room, invitado: Club,
-    jugadores: list[Player], comportamiento: Behavior,
-) -> None:
-    sala_id = sala.id
-    sala.status = ROOM_STATUS_READY_TO_START   # Sala completa
-    db.commit()
-    como(invitado.id)
-
-    r = client.post(url(sala_id), json=armar_body(jugadores, comportamiento, code="ZZZZZZ"))
-
-    assert r.status_code == 404   # No 400: sin el codigo correcto no se sabe nada de la sala
-
 # --- Jugadores ---
 
 
@@ -449,3 +390,27 @@ def test_sin_token_devuelve_401(
     r = client.post(url(sala.id), json=armar_body(jugadores, comportamiento))   # Sin override
 
     assert r.status_code == 401   # AJUSTAR si get_current_user devuelve otro codigo
+
+# --- tests nuevos ---
+
+def test_unirse_a_una_sala_sin_codigo_devuelve_200(
+    client: TestClient, como, sala: Room, invitado: Club,
+    jugadores: list[Player], comportamiento: Behavior,
+) -> None:
+    como(invitado.id)
+
+    r = client.post(url(sala.id), json=armar_body(jugadores, comportamiento))
+
+    assert r.status_code == 200
+
+
+def test_un_codigo_enviado_de_mas_se_ignora(
+    client: TestClient, como, sala: Room, invitado: Club,
+    jugadores: list[Player], comportamiento: Behavior,
+) -> None:
+    como(invitado.id)
+    body = {**armar_body(jugadores, comportamiento), "code": "ZZZZZZ"}
+
+    r = client.post(url(sala.id), json=body)
+
+    assert r.status_code == 200
