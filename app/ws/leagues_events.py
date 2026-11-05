@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.models.enrollment import Enrollment
 from app.models.room import Room
 from app.ws.leagues_hub import leagues_hub
+from app.ws.public_friendly_hub import public_friendly_hub
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +34,11 @@ def _mark_bulk(update_context):
 
 def _notify_after_commit(session):
     if session.info.pop(CHANGED_KEY, False):
-        try:
-            leagues_hub.notify_changed()
-        except Exception:                # el commit ya se hizo: un fallo del aviso no debe romper el request
-            logger.exception("No se pudo programar el aviso de cambio de ligas")
+        for hub in (leagues_hub, public_friendly_hub):
+            try:
+                hub.notify_changed()
+            except Exception:                # el commit ya se hizo: un fallo del aviso no debe romper el request
+                logger.exception("No se pudo programar el aviso de cambio de ligas o amistosos")
 
 
 def _forget_after_rollback(session):
