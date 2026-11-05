@@ -330,6 +330,15 @@ def get_league(db: Session, league_id: str, club: Club) -> LeagueDetailRead:
     )
 
 
+def get_league_by_code(db: Session, code: str, club: Club) -> LeagueDetailRead:
+    league_id = db.scalar(
+        select(Room.id).where(Room.code == code.strip().lower(), Room.type.in_(LEAGUE_TYPES))
+    )
+    if league_id is None:
+        raise LeagueNotFound()
+    return get_league(db, league_id, club)
+
+
 def _load_club_squad(db: Session, league_id: str, club_id: str) -> list[LeagueSquadPlayerRead]:
     rows = db.execute(
         select(SquadEntry.role, Player.id, Player.name, Behavior.id, Behavior.name)

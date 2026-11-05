@@ -14,7 +14,13 @@ from app.schemas.league import (
     ListLeagueResponse,
 )
 from app.services.exceptions_player import AppException
-from app.services.league_service import LeagueService, create_league, get_league, join_league
+from app.services.league_service import (
+    LeagueService,
+    create_league,
+    get_league,
+    get_league_by_code,
+    join_league,
+)
 
 router = APIRouter(
     prefix="/api",
@@ -58,6 +64,21 @@ def join_league_endpoint(
 ) -> JoinLeagueResponse:
     try:
         return join_league(db, league_id, club, payload)
+    except AppException as e:
+        raise HTTPException(
+            status_code=e.status_code,
+            detail={"detail": e.message, "error_code": e.code},
+        ) from e
+
+
+@router.get("/leagues/by-code/{code}", response_model=LeagueDetailRead)
+def read_league_by_code_endpoint(
+    code: str,
+    db: Session = Depends(get_db),
+    club: Club = Depends(get_current_club),
+) -> LeagueDetailRead:
+    try:
+        return get_league_by_code(db, code, club)
     except AppException as e:
         raise HTTPException(
             status_code=e.status_code,
