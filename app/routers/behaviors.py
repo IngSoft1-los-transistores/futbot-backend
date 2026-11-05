@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.user import User
-from app.core.dependencies import get_current_user
+from app.models.club import Club
+from app.core.dependencies import get_current_user, get_current_club
 from app.schemas.behaviors import BehaviorRead, BehaviorCreate, BehaviorUpdate
 from app.services import behavior_services
 from app.behaviors.validator import BehaviorValidationError
@@ -21,12 +22,11 @@ router = APIRouter(prefix="/api", tags=["behaviors"])
         status_code=status.HTTP_200_OK)
 
 def get_behaviors(
-    current_user: User = Depends(get_current_user),
+    club: Club = Depends(get_current_club),
     db: Session = Depends(get_db)
 ) -> list[BehaviorRead]:
     try: 
-        club_id = current_user.club.id
-        return behavior_services.get_all_behavior(db, club_id)
+        return behavior_services.get_all_behavior(db, club.id)
     except SQLAlchemyError as e:
         logger.error(f"Error al obtener comportamientos: {e}")
         raise HTTPException(
@@ -39,12 +39,11 @@ def get_behaviors(
         status_code=status.HTTP_200_OK)
 def get_behavior(
     behavior_id: str,
-    current_user: User = Depends(get_current_user),
+    club: Club = Depends(get_current_club),
     db: Session = Depends(get_db)
 ) -> BehaviorRead:
     try:
-        club_id = current_user.club.id
-        behavior = behavior_services.get_behavior_by_id(db, behavior_id, club_id)
+        behavior = behavior_services.get_behavior_by_id(db, behavior_id, club.id)
         if not behavior:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -65,12 +64,11 @@ def get_behavior(
 
 def create_behavior(
     data: BehaviorCreate,
-    current_user: User = Depends(get_current_user),
+    club: Club = Depends(get_current_club),
     db: Session = Depends(get_db)
 ) -> BehaviorRead:
     try:
-        club_id = current_user.club.id
-        new_behavior = behavior_services.create_behavior(db, data, club_id)
+        new_behavior = behavior_services.create_behavior(db, data, club.id)
         return new_behavior
     except BehaviorValidationError as error:
         logger.warning(f"Error al crear comportamiento: {error}")
@@ -99,12 +97,11 @@ def create_behavior(
 def update_behavior(
     behavior_id: str,
     data: BehaviorUpdate,
-    current_user: User = Depends(get_current_user),
+    club: Club = Depends(get_current_club),
     db: Session = Depends(get_db)
 ) -> BehaviorRead:
     try:
-        club_id = current_user.club.id
-        updated_behavior = behavior_services.update_behavior(db, behavior_id, data, club_id)
+        updated_behavior = behavior_services.update_behavior(db, behavior_id, data, club.id)
         return updated_behavior
     except BehaviorValidationError as error:
         logger.warning(f"Error al actualizar comportamiento: {error}")

@@ -4,6 +4,35 @@ from app.schemas.coord import Coord
 from app.behaviors.loader import BUILTINS_RESTRINGIDOS
 
 TIMEOUT_SECONDS = 5
+ALLOWED_PLAYER_METHODS = {
+    "encontrar_pelota",
+    "encontrar_aliado",
+    "encontrar_enemigo",
+    "encontrar_arco_aliado",
+    "encontrar_arco_enemigo",
+    "encontrar_mis_coordenadas",
+    "tengo_pelota",
+    "club_tiene_pelota",
+    "pasar",
+    "patear_pelota",
+    "correr",
+}
+FORBIDDEN_NAMES = {
+    "__builtins__",
+    "__import__",
+    "eval",
+    "exec",
+    "open",
+    "compile",
+    "input",
+}
+FORBIDDEN_FUNCTIONS = {
+             'exec', 'eval', 'open', 'compile', 
+             'input','__import__', 'getattr', 
+             'setattr', 'delattr', 'globals', 
+             'locals', 'vars', 'dir'
+            }
+
 # Objeto simulado para probar la función `behavior` sin necesidad de un jugador real.
 class FakePlayer:
    def encontrar_pelota(self):
@@ -54,8 +83,16 @@ class BehaviorValidator(ast.NodeVisitor):
 
     def visit_Call(self, node):
         if isinstance(node.func, ast.Name):
-          if node.func.id in ['exec', 'eval', 'open', 'compile', 'input','__import__']:
+          if node.func.id in FORBIDDEN_FUNCTIONS:
             raise BehaviorSecurityError(f"Llamada a función no permitida: {node.func.id}")
+        elif isinstance(node.func, ast.Attribute):
+            if  (
+                isinstance(node.func.value, ast.Name) 
+                and node.func.value.id == 'player'
+                and node.func.attr not in ALLOWED_PLAYER_METHODS
+            ):
+                raise BehaviorSecurityError(f"Llamada a método de jugador no permitido: {node.func.attr}")
+        
         self.generic_visit(node)
 
     def visit_Attribute(self, node):
@@ -66,7 +103,7 @@ class BehaviorValidator(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Name(self, node):
-        if node.id in ['__import__', 'eval', 'exec', 'open', 'compile', 'input']:
+        if node.id in FORBIDDEN_NAMES:
             raise BehaviorSecurityError(f"Uso de palabra reservada no permitido: {node.id}")
         self.generic_visit(node)
 
