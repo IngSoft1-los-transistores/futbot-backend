@@ -76,7 +76,7 @@ def test_crear_comportamiento_exitoso(client, club, db, auth_headers):
     assert behavior_in_db.is_preprogrammed is False
 
 
-def test_crear_comportamiento_malicioso_devuelve_422(client, club, db, auth_headers):
+def test_crear_comportamiento_malicioso_devuelve_422(client, auth_headers):
     payload = {
         "name":"Estrategia Hack",
         "code": "import os\ndef behavior(player):\n    pass"
@@ -174,4 +174,42 @@ def test_editar_comportamiento_inexistente_devuelve_404(client, auth_headers):
         "code": "def behavior(player): pass"
     }, headers=auth_headers)
     assert response.status_code == 404
+    assert "detail" in response.json()
+
+def test_crear_comportamiento_con_sintaxis_invalida_devuelve_422(client, auth_headers):
+    response = client.post("/api/behaviors", json={
+        "name": "Sintaxis invalida",
+        "code": "def behavior(player):"
+    }, headers=auth_headers)
+    assert response.status_code == 422
+    assert "detail" in response.json()
+
+
+def test_editar_comportamiento_con_sintaxis_invalida_devuelve_422(client, club, db, auth_headers):
+    # Creo comportamiento para despues editarlo
+    behavior = Behavior(
+        name="Comportamiento editable",
+        code="def behavior(player): pass",
+        club_id=club.id,
+    )
+    db.add(behavior)
+    db.commit()
+    db.refresh(behavior)
+
+    response = client.put(f"/api/behaviors/{behavior.id}", json={
+        "name": "Sintaxis invalida",
+        "code": "def behavior(player):"
+    }, headers=auth_headers)
+    assert response.status_code == 422
+    assert "detail" in response.json()
+    # Compruebo que no se cambio
+    db.refresh(behavior)
+    assert behavior.code == "def behavior(player): pass"
+
+def test_crear_comportamiento_con_metodo_inventado_devuelve_422(client, auth_headers):
+    response = client.post("/api/behaviors", json={
+        "name": "Metodo inventado",
+        "code": "def behavior(player):\n    player.volar((10, 10))"
+    }, headers=auth_headers)
+    assert response.status_code == 422
     assert "detail" in response.json()
