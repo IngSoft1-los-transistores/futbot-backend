@@ -9,12 +9,14 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.user import User
-from app.core.dependencies import get_current_user
-from app.schemas.behaviors import BehaviorRead
-from app.services.behavior_services import get_all_behavior
+from app.models.club import Club
+from app.core.dependencies import get_current_user, get_current_club
+
+from app.schemas.behaviors import BehaviorRead, BehaviorCreate, BehaviorUpdate
+from app.services import behavior_services
 from app.schemas.behavior_simulation import SimulationTicketCreate, SimulationTicketRead
 from app.services.behavior_simulation import get_simulation_resources
-
+from app.behaviors.validator import BehaviorValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +31,11 @@ _ws_tickets: dict[str, dict] = {}
         status_code=status.HTTP_200_OK)
 
 def get_behaviors(
-    current_user: User = Depends(get_current_user),
+    club: Club = Depends(get_current_club),
     db: Session = Depends(get_db)
 ) -> list[BehaviorRead]:
     try: 
-        club_id = current_user.club.id
-        return get_all_behavior(db, club_id)
+        return behavior_services.get_all_behavior(db, club.id)
     except SQLAlchemyError as e:
         logger.error(f"Error al obtener comportamientos: {e}")
         raise HTTPException(
@@ -84,4 +85,87 @@ def create_simulation_ticket(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error al crear ticket de simulación"
+        )
+
+@router.get(
+        "/behaviors/{behavior_id}",
+        response_model=BehaviorRead,
+        status_code=status.HTTP_200_OK)
+def get_behavior(
+    behavior_id: str,
+    club: Club = Depends(get_current_club),
+    db: Session = Depends(get_db)
+) -> BehaviorRead:
+    try:
+        behavior = behavior_services.get_behavior_by_id(db, behavior_id, club.id)
+        if not behavior:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Comportamiento no encontrado"
+            )
+        return behavior
+    except SQLAlchemyError as e:
+        logger.error(f"Error al obtener comportamiento: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al obtener comportamiento"
+        )
+
+@router.post(
+        "/behaviors", 
+        response_model=BehaviorRead,
+        status_code=status.HTTP_201_CREATED)
+
+def create_behavior(
+    data: BehaviorCreate,
+    club: Club = Depends(get_current_club),
+    db: Session = Depends(get_db)
+) -> BehaviorRead:
+    try:
+        new_behavior = behavior_services.create_behavior(db, data, club.id)
+        return new_behavior
+    except BehaviorValidationError as error:
+        logger.warning(f"Error al crear comportamiento: {error}")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(error)
+        )
+    except ValueError as error:
+        logger.warning(f"Error al crear comportamiento: {error}")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+    
+    except SQLAlchemyError as e:
+        logger.error(f"Error al crear comportamiento: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al crear comportamiento"
+        )
+
+@router.put(
+        "/behaviors/{behavior_id}", 
+        response_model=BehaviorRead,
+        status_code=status.HTTP_200_OK)
+def update_behavior(
+    behavior_id: str,
+    data: BehaviorUpdate,
+    club: Club = Depends(get_current_club),
+    db: Session = Depends(get_db)
+) -> BehaviorRead:
+    try:
+        updated_behavior = behavior_services.update_behavior(db, behavior_id, data, club.id)
+        return updated_behavior
+    except BehaviorValidationError as error:
+        logger.warning(f"Error al actualizar comportamiento: {error}")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(error)
+        )
+    except SQLAlchemyError as e:
+        logger.error(f"Error al actualizar comportamiento: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al actualizar comportamiento"
         )

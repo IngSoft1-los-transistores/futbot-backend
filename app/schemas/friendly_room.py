@@ -10,6 +10,8 @@ class RoomStatus(str, Enum):
     FINISHED = "finished"
 
 class PlayerSelection(BaseModel):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
     player_id: str = Field(..., example="uuid-player-1")
     behavior_id: str = Field(..., example="uuid-behavior-1")
 
