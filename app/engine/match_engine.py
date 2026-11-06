@@ -11,19 +11,32 @@ from app.engine.action import NULL_ACTION, Action
 from app.engine.tick_context import TickContext
 from app.behaviors import executor
 from app.engine.physics import (
-    apply_kick, check_goal, move_player, resolve_possession, step_ball,
+    apply_kick,
+    check_goal,
+    move_player,
+    resolve_possession,
+    step_ball,
 )
 from app.engine.schedule import Segment, build_schedule
 from app.engine.setup import reset_to_kickoff
-from app.engine.state import GoalEvent, MatchPhase, MatchState, Vec2
+from app.engine.state import GoalEvent, MatchPhase, MatchState, Team, Vec2
 
 logger = logging.getLogger(__name__)
 
 
 class MatchEngine:
-    def __init__(self, state: MatchState, field, cfg, behavior_ids: dict[str, str], schedule: list[Segment] | None = None, rng: random.Random | None = None,
+    def __init__(
+        self,
+        state: MatchState,
+        field,
+        cfg,
+        behavior_ids: dict[str, str],
+        schedule: list[Segment] | None = None,
+        rng: random.Random | None = None,
         on_finish: Callable[[MatchState], Awaitable[None]] | None = None,
-        realtime: bool = True,) -> None:
+        realtime: bool = True,
+        dt_functions: dict[Team, Callable | None] | None = None,
+    ) -> None:
         self.state = state
         self.field = field
         self.cfg = cfg
@@ -34,12 +47,12 @@ class MatchEngine:
         )
         self.rng = rng or random.Random()
         self.on_finish = on_finish
-        self.realtime = realtime          # False en tests: sin esperas
+        self.realtime = realtime  # False en tests: sin esperas
         self._segment_index = 0
-        self._pool = ThreadPoolExecutor(
-            max_workers=len(state.players), thread_name_prefix="bot"
-        )
+        self._pool = ThreadPoolExecutor(max_workers=len(state.players), thread_name_prefix="bot")
         self._busy: dict[str, asyncio.Future] = {}
+        # Snapshot taken at kickoff: never re-read from DB or cache during the match.
+        self._dt_functions = {t: f for t, f in (dt_functions or {}).items() if f is not None}
 
     async def _collect_actions(self) -> dict[str, Action]:
         ctx = TickContext(self.state, self.field, self.behavior_ids)
@@ -49,32 +62,26 @@ class MatchEngine:
         launched: dict[str, asyncio.Future] = {}
         for p in self.state.players:
             if p.id in self._busy:
-                continue                      # sigue colgado: acción nula
-            fut = loop.run_in_executor(
-                self._pool, executor.ejecutar_comportamiento, p.id, ctx
-            )
+                continue  # sigue colgado: acción nula
+            fut = loop.run_in_executor(self._pool, executor.ejecutar_comportamiento, p.id, ctx)
             self._busy[p.id] = fut
             fut.add_done_callback(lambda _f, pid=p.id: self._busy.pop(pid, None))
             launched[p.id] = fut
 
         # 2. Esperar a todos con UN solo presupuesto de tiempo
         if launched:
-            await asyncio.wait(
-                launched.values(), timeout=self.cfg.behavior_timeout_seconds
-            )
+            await asyncio.wait(launched.values(), timeout=self.cfg.behavior_timeout_seconds)
 
         # 3. Leer solo lo que terminó a tiempo
         actions: dict[str, Action] = {}
         for p in self.state.players:
             fut = launched.get(p.id)
-            if fut is not None and fut.done() and not fut.cancelled() \
-                    and fut.exception() is None:
+            if fut is not None and fut.done() and not fut.cancelled() and fut.exception() is None:
                 actions[p.id] = ctx.action_for(p.id)
             else:
                 if fut is not None and fut.done() and not fut.cancelled():
-                    logger.warning("Bot %s lanzó excepción", p.id,
-                                   exc_info=fut.exception())
-                actions[p.id] = NULL_ACTION   # timeout, ocupado o falló
+                    logger.warning("Bot %s lanzó excepción", p.id, exc_info=fut.exception())
+                actions[p.id] = NULL_ACTION  # timeout, ocupado o falló
 
         for pid, msg in ctx.errors:
             logger.warning("Bot %s registró error: %s", pid, msg)
@@ -82,8 +89,8 @@ class MatchEngine:
 
     def close(self) -> None:
         self._pool.shutdown(wait=False, cancel_futures=True)
-        
-     # ---------- Cronograma ----------
+
+    # ---------- Cronograma ----------
     def start(self) -> None:
         self._enter_segment(0)
 
@@ -105,7 +112,10 @@ class MatchEngine:
 
     def _apply_substitutions(self) -> None:
         """Pendiente: procesar cambios durante las pausas."""
-    
+
+    def has_dt(self, team: Team) -> bool:
+        return team in self._dt_functions
+
     # ---------- Un tick ----------
     async def tick(self) -> None:
         s = self.state
@@ -139,7 +149,7 @@ class MatchEngine:
 
         # La pelota acompaña a su dueño antes de patear
         owner = players.get(s.ball.owner_id)
-        
+
         # La pelota acompaña a su dueño antes de patear
         owner = players.get(s.ball.owner_id)
         if owner is not None:
@@ -162,17 +172,19 @@ class MatchEngine:
         if scorer is not None:
             kicker = players.get(s.ball.last_kicker_id)
             author = kicker.id if kicker is not None and kicker.team == scorer else None
-            s.goals.append(GoalEvent(
-                team=scorer,
-                player_id=author,
-                second=s.play_ticks // self.cfg.match_tick_rate,
-            ))
+            s.goals.append(
+                GoalEvent(
+                    team=scorer,
+                    player_id=author,
+                    second=s.play_ticks // self.cfg.match_tick_rate,
+                )
+            )
             s.score[scorer] += 1
             reset_to_kickoff(s, self.field)
             s.ball.last_kicker_id = None
             s.ball.cooldown_ticks = 0
             return
-        
+
         # 6. Posesión
         resolve_possession(s.ball, s.players, self.rng)
 
@@ -190,11 +202,11 @@ class MatchEngine:
                 delay = next_t - time.monotonic()
                 if delay > 0:
                     await asyncio.sleep(delay)
-                else:                       # nos atrasamos: no acumular deuda
+                else:  # nos atrasamos: no acumular deuda
                     next_t = time.monotonic()
                     await asyncio.sleep(0)
             await self._finalize()
-        finally:                            # también si se cancela el task
+        finally:  # también si se cancela el task
             self.close()
 
     async def _finalize(self) -> None:
@@ -203,4 +215,4 @@ class MatchEngine:
             try:
                 await self.on_finish(self.state)
             except Exception:
-                logger.exception("Falló on_finish (persistencia/WebSocket)")    
+                logger.exception("Falló on_finish (persistencia/WebSocket)")

@@ -15,14 +15,17 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, ahora_utc, generar_uuid
 
+BEHAVIOR_KIND_PLAYER = "player"
+BEHAVIOR_KIND_DT = "dt"
+
 if TYPE_CHECKING:
     from app.models.club import Club
-    
+
 """Modelo de comportamiento: el script Python de decision."""
 
+
 class Behavior(Base):
-    """Codigo Python que decide la jugada de un jugador en cada tick.
-    """
+    """Codigo Python que decide la jugada de un jugador en cada tick."""
 
     __tablename__ = "behaviors"
     __table_args__ = (
@@ -54,14 +57,10 @@ class Behavior(Base):
     # Codigo Python ya validado contra la API de primitivas
     code: Mapped[str] = mapped_column(Text, nullable=False)
 
-    is_preprogrammed: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False
-    )
+    is_preprogrammed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     # Borrado logico: los partidos ya jugados referencian el comportamiento con el que se jugaron.
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=ahora_utc
@@ -72,4 +71,12 @@ class Behavior(Base):
         DateTime(timezone=True), nullable=False, default=ahora_utc, onupdate=ahora_utc
     )
 
-    club: Mapped["Club | None"] = relationship(back_populates="behaviors")
+    club: Mapped["Club | None"] = relationship(back_populates="behaviors", foreign_keys=[club_id])
+
+    # Comportamiento de jugador o DT.
+    kind: Mapped[str] = mapped_column(
+        String(10),
+        nullable=False,
+        default=BEHAVIOR_KIND_PLAYER,
+        server_default=BEHAVIOR_KIND_PLAYER,
+    )
