@@ -212,9 +212,8 @@ def comportamiento(db: Session) -> Behavior:
     db.commit()
     return comportamiento
 
-
 def armar_solicitud(jugadores: list[Player], comportamiento: Behavior) -> CreateFriendlyRoomRequest:
-    seleccion = lambda j: PlayerSelection(player_id=j.name, behavior_id=comportamiento.id)
+    seleccion = lambda j: PlayerSelection(player_id=j.id, behavior_id=comportamiento.id)
     return CreateFriendlyRoomRequest(
         starters=[seleccion(j) for j in jugadores[:3]],
         substitutes=[seleccion(j) for j in jugadores[3:6]],
