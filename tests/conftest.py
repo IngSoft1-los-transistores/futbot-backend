@@ -63,6 +63,7 @@ def client(db: Session) -> Generator[TestClient, None, None]:
 @pytest.fixture
 def user(db: Session) -> User:
     usuario = User(
+        email_verified_at=datetime.now(timezone.utc),
         username="tester",
         email="tester@futbot.test",
         password_hash="hash-de-prueba",
@@ -126,6 +127,7 @@ def comportamiento_prueba(db: Session) -> Behavior:
 @pytest.fixture
 def login_user(db: Session) -> User:
     user = User(
+        email_verified_at=datetime.now(timezone.utc),
         username="login-tester",
         email="login@futbot.test",
         password_hash=password_context.hash("correct-password"),
@@ -195,3 +197,23 @@ def other_club(db: Session) -> Club:
     db.add(other_user)
     db.commit()
     return other_user.club
+
+
+@pytest.fixture(autouse=True)
+def email_sender():
+    from app.services.email_sender import get_email_sender
+
+    class FakeEmailSender:
+        def __init__(self):
+            self.messages = []
+            self.fail = False
+
+        def send_verification(self, email, url):
+            if self.fail:
+                raise RuntimeError("SMTP unavailable")
+            self.messages.append((email, url))
+
+    sender = FakeEmailSender()
+    app.dependency_overrides[get_email_sender] = lambda: sender
+    yield sender
+    app.dependency_overrides.pop(get_email_sender, None)

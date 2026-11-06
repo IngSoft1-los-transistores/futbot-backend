@@ -17,7 +17,7 @@ PLAYERS_PER_TEAM = 3
 
 @dataclass(frozen=True, slots=True)
 class PlayerSpec:
-    id: int
+    id: str
     speed: float
     control: float
     strength: float
