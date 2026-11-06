@@ -1,13 +1,15 @@
 import asyncio
 import logging
 
-from fastapi import WebSocket
+from fastapi import WebSocket, WebSocketDisconnect
 
 from app.db.session import SessionLocal
 from app.schemas.friendly_room import PublicFriendlyRoomResponse
 from app.services.friendly_service import FriendlyService
 
 logger = logging.getLogger(__name__)
+
+CONEXION_CERRADA = (WebSocketDisconnect, RuntimeError)
 
 
 def load_rooms() -> list[PublicFriendlyRoomResponse]:
@@ -51,11 +53,16 @@ class PublicFriendlyHub:
         if not self.clubs:
             return
         rooms = load_rooms()                         # una sola consulta para todos
+        fallo = None
         for websocket in list(self.clubs):
             try:
                 await self.send_list(websocket, rooms)
-            except Exception:                        # conexión cerrada o rota: se da de baja
+            except CONEXION_CERRADA:                        # conexión cerrada o rota: se da de baja
                 self.remove(websocket)
+            except Exception as error:
+                fallo = fallo or error
+        if fallo is not None:
+            raise fallo
 
     def notify_changed(self) -> None:
         """Pide un aviso desde código síncrono. No hace nada si nadie mira el listado."""

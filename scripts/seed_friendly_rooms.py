@@ -61,13 +61,6 @@ def _get_or_create_club(db: Session, data: dict) -> Club:
     return user.club
 
 
-def _new_room_code(db: Session) -> str:
-    while True:
-        code = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
-        if db.scalar(select(Room).where(Room.code == code)) is None:
-            return code
-
-
 def _create_room(db: Session, creator: Club, status: str) -> Room:
     room = Room(
         type=ROOM_TYPE_FRIENDLY,
@@ -76,7 +69,6 @@ def _create_room(db: Session, creator: Club, status: str) -> Room:
         max_clubs=2,
         match_duration_minutes=5,
         status=status,
-        code=_new_room_code(db),
     )
     db.add(room)
     db.flush()

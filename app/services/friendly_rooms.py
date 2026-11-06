@@ -154,7 +154,6 @@ def get_friendly_room(db: Session, room_id: str, club: Club) -> FriendlyRoomRead
     away_ids = club_ids - {room.creator_club_id}
     return FriendlyRoomRead(
         room_id=room.id,
-        room_code=room.code,
         status=to_camel(room.status),
         match_id=match_id,
         home_club=club_read(room.creator_club_id),

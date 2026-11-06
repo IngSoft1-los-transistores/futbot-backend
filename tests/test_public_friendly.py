@@ -25,6 +25,7 @@ from app.models.room import (
 from app.models.user import User
 from app.schemas.friendly_room import CreateFriendlyRoomRequest, PlayerSelection
 from app.services.friendly_service import FriendlyService
+from app.models.squad_entry import SquadEntry
 
 """Tests de GET /api/friendly/rooms/public y de la creación de salas sin código."""
 
@@ -261,3 +262,24 @@ def test_la_sala_creada_aparece_en_el_listado_de_otro_club_pero_no_en_el_propio(
     assert ids(client.get(URL)) == [resultado.room_id]
     como(anfitrion_id)
     assert ids(client.get(URL)) == []
+
+# --- agregado post-review ---
+
+def test_si_falla_el_guardado_no_queda_nada_a_medias(
+    db: Session, anfitrion: Club, comportamiento: Behavior, monkeypatch
+) -> None:
+    jugadores = crear_jugadores(db, anfitrion.id)
+    anfitrion_id = anfitrion.id
+    solicitud = armar_solicitud(jugadores, comportamiento)
+
+    def falla():
+        raise RuntimeError("disco lleno")
+
+    monkeypatch.setattr(db, "commit", falla)
+
+    with pytest.raises(RuntimeError):
+        FriendlyService(db).create_room(anfitrion_id, solicitud)
+
+    assert db.query(Room).count() == 0
+    assert db.query(Enrollment).count() == 0
+    assert db.query(SquadEntry).count() == 0

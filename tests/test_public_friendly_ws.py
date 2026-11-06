@@ -249,19 +249,34 @@ def test_una_sala_que_se_completa_deja_de_listarse(db: Session) -> None:
     assert suscripto.send_json.await_args.args[0]["rooms"] == []
 
 
-def test_broadcast_descarta_las_conexiones_caidas_y_sigue_con_las_demas(db: Session) -> None:
+def test_broadcast_descarta_las_conexiones_cerradas_y_sigue_con_las_demas(db: Session) -> None:
     club_id = crear_club(db, "club").id
-    viva, caida = AsyncMock(), AsyncMock()
-    caida.send_json.side_effect = RuntimeError("conexion cerrada")
-    public_friendly_hub.add(viva, club_id)
-    public_friendly_hub.add(caida, club_id)
+    viva, desconectada, ya_cerrada = AsyncMock(), AsyncMock(), AsyncMock()
+    desconectada.send_json.side_effect = WebSocketDisconnect(code=1006)
+    ya_cerrada.send_json.side_effect = RuntimeError('Cannot call "send" once a close message has been sent.')
+    for ws in (viva, desconectada, ya_cerrada):
+        public_friendly_hub.add(ws, club_id)
 
     asyncio.run(public_friendly_hub.broadcast())
 
     viva.send_json.assert_awaited_once()
     assert viva in public_friendly_hub.clubs
-    assert caida not in public_friendly_hub.clubs
+    assert desconectada not in public_friendly_hub.clubs
+    assert ya_cerrada not in public_friendly_hub.clubs
 
+
+def test_un_error_inesperado_no_se_oculta_pero_las_demas_conexiones_reciben_el_listado(db: Session) -> None:
+    club_id = crear_club(db, "club").id
+    rota, viva = AsyncMock(), AsyncMock()
+    rota.send_json.side_effect = ValueError("bug")
+    public_friendly_hub.add(rota, club_id)
+    public_friendly_hub.add(viva, club_id)
+
+    with pytest.raises(ValueError):
+        asyncio.run(public_friendly_hub.broadcast())
+
+    viva.send_json.assert_awaited_once()              # el resto igual recibió el listado
+    assert rota in public_friendly_hub.clubs          # y la conexión con el bug no se da de baja en silencio
 
 def test_broadcast_sin_suscriptos_no_consulta_la_base(monkeypatch) -> None:
     consultas = []

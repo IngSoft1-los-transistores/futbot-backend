@@ -119,50 +119,55 @@ class FriendlyService:
 
 
         # Crear sala con estado waiting_guest
-        new_room = Room(
-            type=ROOM_TYPE_FRIENDLY,
-            min_clubs=2,
-            max_clubs=2,
-            match_duration_minutes=10,
-            status=ROOM_STATUS_WAITING_GUEST,
-            creator_club_id=club_id,
-        )
-        self.db.add(new_room)
-        self.db.flush()
-
-
-
-
-        # Registrar participacion del club creador de sala
-        enrollment = Enrollment(
-            room_id=new_room.id,
-            club_id=club_id
-        )
-        self.db.add(enrollment)
-
-
-
-
-        # Registrat los titulares y suplentes en SquadEntry
-        for selection in request.starters:
-            squad_entry = SquadEntry(
-                room_id=new_room.id,
-                player_id=selection.player_id,
-                behavior_id=selection.behavior_id,
-                role=ROLE_STARTER
+        try:
+            new_room = Room(
+                type=ROOM_TYPE_FRIENDLY,
+                min_clubs=2,
+                max_clubs=2,
+                match_duration_minutes=10,
+                status=ROOM_STATUS_WAITING_GUEST,
+                creator_club_id=club_id,
             )
-            self.db.add(squad_entry)
+            self.db.add(new_room)
+            self.db.flush()
+            room_id = new_room.id
 
-        for selection in request.substitutes:
-            squad_entry = SquadEntry(
+
+
+
+            # Registrar participacion del club creador de sala
+            enrollment = Enrollment(
                 room_id=new_room.id,
-                player_id=selection.player_id,
-                behavior_id=selection.behavior_id,
-                role=ROLE_SUBSTITUTE                                
+                club_id=club_id
             )
-            self.db.add(squad_entry)
+            self.db.add(enrollment)
 
-        self.db.commit()
+
+
+
+            # Registrat los titulares y suplentes en SquadEntry
+            for selection in request.starters:
+                squad_entry = SquadEntry(
+                    room_id=new_room.id,
+                    player_id=selection.player_id,
+                    behavior_id=selection.behavior_id,
+                    role=ROLE_STARTER
+                )
+                self.db.add(squad_entry)
+
+            for selection in request.substitutes:
+                squad_entry = SquadEntry(
+                    room_id=new_room.id,
+                    player_id=selection.player_id,
+                    behavior_id=selection.behavior_id,
+                    role=ROLE_SUBSTITUTE                                
+                )
+                self.db.add(squad_entry)
+
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
 
         return FriendlyRoomResponse(
             room_id=new_room.id,
