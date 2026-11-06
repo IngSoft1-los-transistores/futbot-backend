@@ -46,36 +46,6 @@ class MaxClubsBelowMin(AppException):
             code="MAX_CLUBS_BELOW_MIN",
         )
 
-# El mismo jugador aparece más de una vez en la escuadra.
-class DuplicatePlayer(AppException):
-    def __init__(self, player_name: str):
-        self.player_name = player_name
-
-        super().__init__(
-            message=f"Player '{player_name}' cannot appear more than once in the squad.",
-            code="DUPLICATE_PLAYER",
-        )
-
-# No hay un jugador con ese nombre en el club creador.
-class PlayerNotFound(AppException):
-    def __init__(self, player_name: str):
-        self.player_name = player_name
-
-        super().__init__(
-            message=f"Player '{player_name}' does not exist in your club.",
-            code="PLAYER_NOT_FOUND",
-        )
-
-# El comportamiento asignado no existe.
-class InvalidBehavior(AppException):
-    def __init__(self, behavior_id: str):
-        self.behavior_id = behavior_id
-
-        super().__init__(
-            message=f"Behavior with id:{behavior_id} is invalid.",
-            code="INVALID_BEHAVIOR",
-        )
-
 # La contraseña de una liga privada es inválida (falta, es corta o tiene espacios).
 class InvalidLeaguePassword(AppException):
     def __init__(self, reason: str):
