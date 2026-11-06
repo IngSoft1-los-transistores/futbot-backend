@@ -241,6 +241,9 @@ Mensajes del servidor:
   sustitución aceptada durante el juego; queda pendiente hasta la siguiente
   pausa. `{"type":"SUBSTITUTION_APPLIED","ok":true,"status":"applied",...}`
   confirma que el cambio ya se aplicó.
+- `{"type":"SUBSTITUTION_STATE","pendingSubstitution":...,"changesUsedThisPause":0}`:
+  estado privado del club autenticado al conectar o reconectar. No se incluye
+  en los snapshots compartidos con ambos clubes.
 
 El cliente puede solicitar un cambio enviando
 `{"type":"SUBSTITUTE_PLAYER","outPlayerId":"<id titular>","inPlayerId":"<id suplente>"}`.
@@ -248,11 +251,13 @@ El servidor determina el club a partir de la sesión autenticada (no acepta un
 `club_id` del cliente). Los identificadores deben pertenecer al partido; el que
 sale debe estar en cancha y el que entra debe ser suplente de ese mismo club.
 Durante el juego se acepta como máximo una solicitud pendiente por club y se
-aplica en la próxima pausa. Durante una pausa se aplica inmediatamente y se
-permite como máximo un cambio por club en esa pausa. Los rechazos se devuelven
-solo al socket que hizo la solicitud como
-`{"type":"error","ok":false,"message":"..."}`. Los eventos programados y
-aplicados se envían a todos los sockets autorizados de ese partido.
+aplica en la próxima pausa; si ya no quedan pausas, se rechaza. Durante una
+pausa se aplica inmediatamente y se permite como máximo un cambio por club en
+esa pausa. Los rechazos se devuelven solo al socket que hizo la solicitud como
+`{"type":"error","ok":false,"error_code":"SUBSTITUTION_LIMIT_REACHED","message":"..."}`.
+El cliente debe tomar decisiones por `error_code`, no por el texto del mensaje.
+Los eventos programados y aplicados se envían a todos los sockets autorizados de
+ese partido.
 
 El motor mantiene titulares y suplentes en memoria mientras corre el partido.
 Esta operación no modifica la convocatoria original en la base de datos; los

@@ -88,6 +88,7 @@ def request_match_substitution(
         return {
             "type": "error",
             "ok": False,
+            "error_code": "SUBSTITUTION_ENGINE_UNAVAILABLE",
             "message": "El partido no tiene un motor activo",
         }
     team = _match_club_teams.get(match_id, {}).get(club_id)
@@ -95,9 +96,26 @@ def request_match_substitution(
         return {
             "type": "error",
             "ok": False,
+            "error_code": "SUBSTITUTION_CLUB_NOT_IN_MATCH",
             "message": "El club no participa en este partido",
         }
     return engine.request_substitution(team, out_player_id, in_player_id)
+
+
+def get_match_substitution_state(match_id: str, club_id: str) -> dict | None:
+    engine = _engines.get(match_id)
+    if engine is None:
+        return None
+    team = _match_club_teams.get(match_id, {}).get(club_id)
+    if team is None:
+        return None
+
+    pending = engine.pending_substitution[team]
+    return {
+        "type": "SUBSTITUTION_STATE",
+        "pendingSubstitution": dict(pending) if pending is not None else None,
+        "changesUsedThisPause": engine.changes_used_this_pause[team],
+    }
 
 
 def capture_tick(engine, roster, club_of, previous_goals=0):

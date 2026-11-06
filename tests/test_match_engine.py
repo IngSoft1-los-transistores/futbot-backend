@@ -256,7 +256,62 @@ async def test_substitution_is_blocked_if_already_used_this_pause(make_engine):
 
     assert result["ok"] is False
     assert result["message"] == "Solo se permite 1 cambio por pausa"
+    assert result["error_code"] == "SUBSTITUTION_LIMIT_REACHED"
     assert eng.pending_substitution[Team.HOME] is None
+
+
+def test_substitution_is_rejected_when_no_future_pause_exists(make_engine):
+    eng = make_engine()
+    eng.start()
+    eng._segment_index = len(eng.schedule) - 1
+    eng.state.phase = P.PLAY
+    eng.state.period = 4
+    register_home_substitute(eng)
+
+    result = eng.request_substitution(Team.HOME, "h0", "h3")
+
+    assert result["ok"] is False
+    assert result["error_code"] == "SUBSTITUTION_NO_FUTURE_PAUSE"
+    assert eng.pending_substitution[Team.HOME] is None
+
+
+@pytest.mark.parametrize(
+    ("out_player_id", "in_player_id", "coach_active", "phase", "error_code"),
+    [
+        ("invalid", "h3", False, P.PLAY, "SUBSTITUTION_INVALID_OUT_PLAYER"),
+        ("h0", "invalid", False, P.PLAY, "SUBSTITUTION_INVALID_IN_PLAYER"),
+        ("h0", "h3", True, P.PLAY, "SUBSTITUTION_COACH_ACTIVE"),
+        ("h0", "h3", False, P.PRE, "SUBSTITUTION_INVALID_PHASE"),
+    ],
+)
+def test_substitution_rejections_include_error_codes(
+    make_engine, out_player_id, in_player_id, coach_active, phase, error_code
+):
+    eng = make_engine()
+    eng.start()
+    eng.state.phase = phase
+    eng.coach_active[Team.HOME] = coach_active
+    register_home_substitute(eng)
+
+    result = eng.request_substitution(Team.HOME, out_player_id, in_player_id)
+
+    assert result["ok"] is False
+    assert result["error_code"] == error_code
+
+
+def test_rejected_substitution_reports_already_pending_error_code(make_engine):
+    eng = make_engine()
+    eng.start()
+    register_home_substitute(eng)
+    eng.pending_substitution[Team.HOME] = {
+        "outPlayerId": "h1",
+        "inPlayerId": "h3",
+    }
+
+    result = eng.request_substitution(Team.HOME, "h0", "h3")
+
+    assert result["ok"] is False
+    assert result["error_code"] == "SUBSTITUTION_ALREADY_PENDING"
 
 
 @pytest.mark.asyncio

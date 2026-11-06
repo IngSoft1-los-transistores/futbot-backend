@@ -20,7 +20,10 @@ from app.core.dependencies import get_current_user
 from app.core.security import decode_access_token
 from app.db.session import get_db
 from app.models.club import Club
-from app.services.match_runner import request_match_substitution
+from app.services.match_runner import (
+    get_match_substitution_state,
+    request_match_substitution,
+)
 from app.services.match_state import MatchAccessDenied, MatchNotFound, MatchStateUnavailable, authorize_match, get_match_state
 from app.ws.manager import manager
 
@@ -94,6 +97,7 @@ async def match_stream(socket: WebSocket, match_id: str, db: Session = Depends(g
         subscription = manager.subscribe(match_id, claims['sid'])
         state, expires_at = await run_in_threadpool(read_authorized_state, bind, match_id, token)
         club_id = await run_in_threadpool(authorized_club_id, bind, match_id, token)
+        substitution_state = get_match_substitution_state(match_id, club_id)
         revision = 0
         if state is None:
             await error_message(socket, 409, 'Esperando el estado inicial del partido. Se actualizará automáticamente.')
@@ -103,6 +107,8 @@ async def match_stream(socket: WebSocket, match_id: str, db: Session = Depends(g
             if state['status'] == 'finished':
                 await socket.close(code=1000)
                 return
+        if substitution_state is not None:
+            await socket.send_json(substitution_state)
         received = asyncio.create_task(socket.receive_text())
         changed = asyncio.create_task(subscription.queue.get())
         event_changed = asyncio.create_task(subscription.event_queue.get())
@@ -157,6 +163,7 @@ async def match_stream(socket: WebSocket, match_id: str, db: Session = Depends(g
                         else:
                             await socket.send_json({
                                 'type': 'error', 'ok': False,
+                                'error_code': 'SUBSTITUTION_INVALID_REQUEST',
                                 'message': 'outPlayerId e inPlayerId son obligatorios',
                             })
                     else:

@@ -171,6 +171,7 @@ class MatchEngine:
             return self._emit_ws_event(
                 "error",
                 ok=False,
+                error_code="SUBSTITUTION_COACH_ACTIVE",
                 message="No se permiten sustituciones mientras el DT está activo",
                 team=team.value,
                 outPlayerId=out,
@@ -181,6 +182,7 @@ class MatchEngine:
             return self._emit_ws_event(
                 "error",
                 ok=False,
+                error_code="SUBSTITUTION_INVALID_OUT_PLAYER",
                 message="El jugador de salida debe ser titular",
                 team=team.value,
                 outPlayerId=out,
@@ -191,6 +193,7 @@ class MatchEngine:
             return self._emit_ws_event(
                 "error",
                 ok=False,
+                error_code="SUBSTITUTION_INVALID_IN_PLAYER",
                 message="El jugador de entrada debe ser suplente",
                 team=team.value,
                 outPlayerId=out,
@@ -198,10 +201,25 @@ class MatchEngine:
             )
 
         if self.state.phase == MatchPhase.PLAY:
+            has_future_pause = any(
+                segment.phase in (MatchPhase.HYDRATION, MatchPhase.HALFTIME)
+                for segment in self.schedule[self._segment_index + 1:]
+            )
+            if not has_future_pause:
+                return self._emit_ws_event(
+                    "error",
+                    ok=False,
+                    error_code="SUBSTITUTION_NO_FUTURE_PAUSE",
+                    message="No quedan pausas para realizar una sustitución",
+                    team=team.value,
+                    outPlayerId=out,
+                    inPlayerId=inn,
+                )
             if self.pending_substitution[team] is not None:
                 return self._emit_ws_event(
                     "error",
                     ok=False,
+                    error_code="SUBSTITUTION_ALREADY_PENDING",
                     message="Ya hay una sustitución pendiente para este club",
                     team=team.value,
                     outPlayerId=out,
@@ -222,6 +240,7 @@ class MatchEngine:
                 return self._emit_ws_event(
                     "error",
                     ok=False,
+                    error_code="SUBSTITUTION_LIMIT_REACHED",
                     message="Solo se permite 1 cambio por pausa",
                     team=team.value,
                     outPlayerId=out,
@@ -241,6 +260,7 @@ class MatchEngine:
         return self._emit_ws_event(
             "error",
             ok=False,
+            error_code="SUBSTITUTION_INVALID_PHASE",
             message="La sustitución solo se admite en juego o pausa activa",
             team=team.value,
             outPlayerId=out,

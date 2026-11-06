@@ -140,6 +140,12 @@ def test_substitution_command_is_applied_and_events_reach_websocket(
     try:
         with connect(client, demo.match_id) as socket:
             assert authenticate(socket, token)['type'] == 'state'
+            initial_substitution_state = socket.receive_json()
+            assert initial_substitution_state == {
+                'type': 'SUBSTITUTION_STATE',
+                'pendingSubstitution': None,
+                'changesUsedThisPause': 0,
+            }
             socket.send_json({
                 'type': 'SUBSTITUTE_PLAYER',
                 'outPlayerId': demo.player_ids[0][0],
@@ -152,9 +158,20 @@ def test_substitution_command_is_applied_and_events_reach_websocket(
                 'inPlayerId': demo.player_ids[0][3],
             }
 
+        with connect(client, demo.match_id) as reconnected:
+            assert authenticate(reconnected, token)['type'] == 'state'
+            assert reconnected.receive_json() == {
+                'type': 'SUBSTITUTION_STATE',
+                'pendingSubstitution': {
+                    'outPlayerId': demo.player_ids[0][0],
+                    'inPlayerId': demo.player_ids[0][3],
+                },
+                'changesUsedThisPause': 0,
+            }
+
             engine.state.phase = MatchPhase.HYDRATION
             engine._apply_substitutions()
-            applied = socket.receive_json()
+            applied = reconnected.receive_json()
             assert applied['type'] == 'SUBSTITUTION_APPLIED'
             assert demo.player_ids[0][3] in {
                 player.id for player in engine.state.players
@@ -163,16 +180,39 @@ def test_substitution_command_is_applied_and_events_reach_websocket(
                 player.id for player in engine.state.players
             }
 
-            socket.send_json({
+            reconnected.send_json({
                 'type': 'SUBSTITUTE_PLAYER',
                 'outPlayerId': demo.player_ids[0][1],
                 'inPlayerId': demo.player_ids[0][4],
             })
-            rejected = socket.receive_json()
+            rejected = reconnected.receive_json()
             assert rejected['type'] == 'error'
+            assert rejected['error_code'] == 'SUBSTITUTION_LIMIT_REACHED'
             assert rejected['message'] == 'Solo se permite 1 cambio por pausa'
+
+        with connect(client, demo.match_id) as reconnected_after_change:
+            assert authenticate(reconnected_after_change, token)['type'] == 'state'
+            assert reconnected_after_change.receive_json() == {
+                'type': 'SUBSTITUTION_STATE',
+                'pendingSubstitution': None,
+                'changesUsedThisPause': 1,
+            }
     finally:
         engine.close()
+
+
+def test_substitution_service_rejections_include_error_codes(demo, monkeypatch):
+    monkeypatch.delitem(match_runner._engines, demo.match_id, raising=False)
+    unavailable = match_runner.request_match_substitution(
+        demo.match_id, demo.club_ids[0], "out", "in"
+    )
+    assert unavailable["error_code"] == "SUBSTITUTION_ENGINE_UNAVAILABLE"
+
+    monkeypatch.setitem(match_runner._engines, demo.match_id, object())
+    not_a_participant = match_runner.request_match_substitution(
+        demo.match_id, demo.club_ids[0], "out", "in"
+    )
+    assert not_a_participant["error_code"] == "SUBSTITUTION_CLUB_NOT_IN_MATCH"
 
 
 def test_disallowed_origin_is_rejected(client, demo):
