@@ -1,5 +1,3 @@
-
-
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -12,12 +10,12 @@ if TYPE_CHECKING:
     from app.models.behavior import Behavior
     from app.models.player import Player
     from app.models.user import User
-    
+
 """Modelo de club: la identidad de juego del usuario."""
 
+
 class Club(Base):
-    """Identidad de juego: es el dueno de jugadores, comportamientos y salas.
-    """
+    """Identidad de juego: es el dueno de jugadores, comportamientos y salas."""
 
     __tablename__ = "clubs"
     __table_args__ = (
@@ -49,10 +47,24 @@ class Club(Base):
 
     user: Mapped["User"] = relationship(back_populates="club")
 
-    players: Mapped[list["Player"]] = relationship(
-        back_populates="club", passive_deletes=True
-    )
+    players: Mapped[list["Player"]] = relationship(back_populates="club", passive_deletes=True)
 
     behaviors: Mapped[list["Behavior"]] = relationship(
-        back_populates="club", passive_deletes=True
+        back_populates="club",
+        passive_deletes=True,
+        foreign_keys="Behavior.club_id",
+    )
+
+    dt_behavior_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "behaviors.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_clubs_dt_behavior_id",
+        ),
+        nullable=True,
+    )
+    dt_behavior: Mapped["Behavior | None"] = relationship(
+        foreign_keys=[dt_behavior_id], post_update=True
     )
