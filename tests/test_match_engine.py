@@ -23,13 +23,14 @@ def make_engine(monkeypatch):
     monkeypatch.setattr(executor, "ejecutar_comportamiento", lambda pid, ctx: None)
     engines = []
 
-    def _make(on_finish=None):
+    def _make(on_finish=None, has_penalty_shootout=False):
         field = FieldConfig()
         state = create_initial_state(field, specs("h"), specs("a"))
         # 8 s a 10 tps = 20 ticks por periodo; hidratación 10 ticks, entretiempo 20
         sched = build_schedule(8, 10, hydration_seconds=1, halftime_seconds=2)
         eng = MatchEngine(state, field, Cfg(), {p.id: "b" for p in state.players},
-                          schedule=sched, on_finish=on_finish, realtime=False)
+                          schedule=sched, on_finish=on_finish, realtime=False,
+                          has_penalty_shootout=has_penalty_shootout)
         engines.append(eng)
         return eng
 
@@ -92,6 +93,22 @@ async def test_phase_sequence_and_totals(make_engine):
     assert eng.state.phase == P.FINISHED
     assert eng.state.play_ticks == 80                 # 4 periodos x 20
     assert eng.state.tick_count == 80 + 10 + 20 + 10  # + pausas
+
+
+@pytest.mark.asyncio
+async def test_tied_match_enters_penalties_when_enabled(make_engine):
+    eng = make_engine(has_penalty_shootout=True)
+    eng.start()
+    eng.state.score[Team.HOME] = eng.state.score[Team.AWAY] = 1
+    eng._segment_index = len(eng.schedule) - 1
+    eng.state.phase = P.PLAY
+    eng.state.phase_tick = eng.schedule[-1].ticks - 1
+
+    await eng.tick()
+
+    assert eng.state.phase == P.PENALTIES
+    assert eng.penalty_attempts == {Team.HOME: 0, Team.AWAY: 0}
+    assert eng.ws_events[-1]["type"] == "PENALTIES_STARTED"
 
 
 @pytest.mark.asyncio
@@ -200,6 +217,89 @@ async def test_own_goal_has_no_author(make_engine):
     await eng.tick()
     assert eng.state.goals[0].player_id is None
     assert eng.state.score[Team.HOME] == 1
+
+
+@pytest.mark.asyncio
+async def test_penalty_attempt_expires_after_ten_seconds(make_engine):
+    eng = make_engine()
+    eng.dt = 1.0
+    eng._start_penalties()
+
+    for _ in range(9):
+        await eng.tick()
+    assert eng.penalty_attempts == {Team.HOME: 0, Team.AWAY: 0}
+
+    await eng.tick()
+
+    assert eng.penalty_attempts == {Team.HOME: 1, Team.AWAY: 0}
+    assert eng.ws_events[-1]["type"] == "PENALTY_SHOT_RESULT"
+    assert eng.ws_events[-1]["status"] == "missed"
+
+
+@pytest.mark.asyncio
+async def test_penalty_goal_updates_partial_score(make_engine, monkeypatch):
+    import app.engine.match_engine as match_engine
+
+    eng = make_engine()
+    eng.dt = 1.0
+    eng._start_penalties()
+    eng.state.ball.owner_id = None
+    monkeypatch.setattr(match_engine, "check_goal", lambda previous, current, field: Team.HOME)
+
+    await eng.tick()
+
+    assert eng.penalty_score == {Team.HOME: 1, Team.AWAY: 0}
+    assert eng.penalty_attempts == {Team.HOME: 1, Team.AWAY: 0}
+    assert eng.ws_events[-1]["score"] == {"home": 1, "away": 0}
+    assert eng.ws_events[-1]["status"] == "scored"
+
+
+@pytest.mark.asyncio
+async def test_penalty_shootout_stops_after_ten_attempts(make_engine):
+    class LastChoice:
+        @staticmethod
+        def choice(values):
+            return values[-1]
+
+        @staticmethod
+        def choices(values, weights):
+            return [values[0]]
+
+    eng = make_engine()
+    eng.dt = 10.0
+    eng.rng = LastChoice()
+    eng._start_penalties()
+
+    for _ in range(10):
+        await eng.tick()
+
+    assert eng.penalty_attempts == {Team.HOME: 5, Team.AWAY: 5}
+    assert eng.state.phase == P.FINISHED
+
+
+@pytest.mark.asyncio
+async def test_tied_ten_shot_shootout_selects_random_winner(make_engine):
+    class AwayChoice:
+        @staticmethod
+        def choice(values):
+            return Team.AWAY if Team.AWAY in values else values[0]
+
+        @staticmethod
+        def choices(values, weights):
+            return [values[0]]
+
+    eng = make_engine()
+    eng.dt = 10.0
+    eng.rng = AwayChoice()
+    eng._start_penalties()
+
+    for _ in range(10):
+        await eng.tick()
+
+    assert eng.penalty_score == {Team.HOME: 0, Team.AWAY: 0}
+    assert eng.penalty_winner == Team.AWAY
+    assert eng.ws_events[-2]["type"] == "PENALTIES_TIEBREAK"
+    assert eng.ws_events[-1]["type"] == "PENALTIES_FINISHED"
 
 
 @pytest.mark.asyncio

@@ -63,12 +63,14 @@ def test_create_league(
     assert response.status_code == 201
     assert response.json()["name"] == "Test League"
     assert response.json()["is_private"] is False
+    assert response.json()["has_penalty_shootout"] is False
     assert response.json()["creator_id"] == club.id
 
     room = db.scalars(select(Room)).one()
     assert room.creator_club_id == club.id
     assert room.status == ROOM_STATUS_WAITING_GUEST
     assert room.password_hash is None
+    assert room.has_penalty_shootout is False
 
     # Enrollment
     enrollments = db.scalars(select(Enrollment)).all()
@@ -82,6 +84,23 @@ def test_create_league(
     assert sum(entry.role == ROLE_SUBSTITUTE for entry in squad_entries) == 3
     # Los nombres del payload se tradujeron a los ids reales de los jugadores.
     assert {e.player_id for e in squad_entries} == {p.id for p in club_players}
+
+
+def test_create_league_with_penalty_shootout(
+    client, db, club, club_players, comportamiento_prueba, auth_headers
+):
+    payload = league_payload(
+        club_players,
+        comportamiento_prueba,
+        has_penalty_shootout=True,
+    )
+
+    response = client.post("/api/leagues", headers=auth_headers, json=payload)
+
+    assert response.status_code == 201
+    assert response.json()["has_penalty_shootout"] is True
+    room = db.scalars(select(Room)).one()
+    assert room.has_penalty_shootout is True
 
 
 # min_clubs por debajo del mínimo permitido: 400 y no se guarda nada.

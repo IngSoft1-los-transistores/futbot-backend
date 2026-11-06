@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import delete, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 from starlette.websockets import WebSocketDisconnect
 
 from app.core.security import create_access_token, decode_access_token
@@ -13,6 +13,8 @@ from app.engine.state import MatchPhase, Team
 from app.models.auth_session import AuthSession
 from app.engine.live_state import match_states
 from app.models.user import User
+from app.models.match import Match
+from app.models.room import Room
 from app.services.auth import start_session
 from app.services import match_runner
 from app.services.match_state import publish_match_state
@@ -213,6 +215,30 @@ def test_substitution_service_rejections_include_error_codes(demo, monkeypatch):
         demo.match_id, demo.club_ids[0], "out", "in"
     )
     assert not_a_participant["error_code"] == "SUBSTITUTION_CLUB_NOT_IN_MATCH"
+
+
+def test_persists_penalty_winner_club(db, demo):
+    sessions = sessionmaker(bind=db.get_bind(), autoflush=False)
+
+    match_runner.persist_penalty_winner(
+        sessions,
+        demo.match_id,
+        demo.club_ids[1],
+    )
+
+    db.expire_all()
+    assert db.get(Match, demo.match_id).penalty_winner_club_id == demo.club_ids[1]
+
+
+def test_engine_reads_shootout_setting_from_league_room(db, demo):
+    db.get(Room, demo.room_id).has_penalty_shootout = True
+    db.commit()
+
+    engine = match_runner.build_engine_from_db(db, demo.match_id, get_settings())
+    try:
+        assert engine.has_penalty_shootout is True
+    finally:
+        engine.close()
 
 
 def test_disallowed_origin_is_rejected(client, demo):

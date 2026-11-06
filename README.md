@@ -259,6 +259,14 @@ El cliente debe tomar decisiones por `error_code`, no por el texto del mensaje.
 Los eventos programados y aplicados se envían a todos los sockets autorizados de
 ese partido.
 
+En las ligas configuradas sin empates, si el tiempo regular termina igualado,
+el motor inicia automáticamente una tanda de penales: hasta cinco intentos por
+club, alternados, con un máximo de 10 segundos de juego por intento. Se emiten
+`PENALTIES_STARTED`, `PENALTY_SHOT_RESULT` y `PENALTIES_FINISHED` con el marcador
+parcial/final; si la tanda termina igualada, `PENALTIES_TIEBREAK` anuncia el
+ganador elegido al azar. El ganador queda guardado en
+`matches.penalty_winner_club_id`.
+
 El motor mantiene titulares y suplentes en memoria mientras corre el partido.
 Esta operación no modifica la convocatoria original en la base de datos; los
 snapshots reflejan qué jugadores están en cancha en cada tick.

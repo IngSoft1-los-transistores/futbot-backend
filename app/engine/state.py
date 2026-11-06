@@ -28,6 +28,7 @@ class MatchPhase(str, Enum):
     PLAY = "play"
     HYDRATION = "hydration"
     HALFTIME = "halftime"
+    PENALTIES = "penalties"
     FINISHED = "finished"
 
 class MatchStateSource(Protocol):
