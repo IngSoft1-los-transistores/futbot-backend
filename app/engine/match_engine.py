@@ -103,6 +103,26 @@ class MatchEngine:
         else:
             self._enter_segment(nxt)
 
+    def _pause_segment(self) -> Segment | None:
+        """Current segment if it is a hydration or halftime pause."""
+        if self.state.phase not in (MatchPhase.HYDRATION, MatchPhase.HALFTIME):
+            return None
+        return self.schedule[self._segment_index]
+
+    @property
+    def pause_seconds(self) -> int | None:
+        """Total length of the current pause, or None outside a pause."""
+        segment = self._pause_segment()
+        return None if segment is None else round(segment.ticks / self.cfg.match_tick_rate)
+
+    @property
+    def pause_remaining_seconds(self) -> float | None:
+        """Seconds left in the current pause as of this tick, or None outside a pause."""
+        segment = self._pause_segment()
+        if segment is None:
+            return None
+        return (segment.ticks - self.state.phase_tick) / self.cfg.match_tick_rate
+
     def _apply_substitutions(self) -> None:
         """Pendiente: procesar cambios durante las pausas."""
     

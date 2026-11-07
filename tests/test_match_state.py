@@ -58,7 +58,8 @@ def match_scenario(db):
         players[role] = player
     db.commit()
     tick = MatchTick.model_validate({
-        "status": "in_progress", "current_time": 0,
+        "status": "in_progress", "phase": "PLAYING", "pause_duration": None,
+        "pause_remaining": None, "current_time": 0,
         "score": {"home": 0, "away": 0}, "ball": {"x": 5, "y": 3},
         "players": [{"player_id": p.id, "on_field": True, "position": {"x": 0, "y": 0}}
                     for p in players.values()],
@@ -250,10 +251,12 @@ def test_invalid_tick_does_not_change_published_state(db, published_match, chang
 def test_paused_and_finished_states_and_no_reopening(db, published_match):
     scenario = published_match
     data = scenario.tick.model_dump()
-    data.update(status="paused", current_time=100)
+    data.update(status="paused", phase="HYDRATION", pause_duration=15, pause_remaining=10.0,
+                current_time=100)
     publish_match_state(db, scenario.match.id, MatchTick.model_validate(data), expected_revision=1)
     db.commit()
-    data.update(status="finished", current_time=300)
+    data.update(status="finished", phase="FINISHED", pause_duration=None, pause_remaining=None,
+                current_time=300)
     final = publish_match_state(db, scenario.match.id, MatchTick.model_validate(data), expected_revision=2)
     db.commit()
     assert final.remaining_time == 0 and final.status == "finished"
@@ -263,8 +266,24 @@ def test_paused_and_finished_states_and_no_reopening(db, published_match):
 
 def test_rejects_non_finite_coordinates():
     with pytest.raises(ValidationError):
-        MatchTick.model_validate({"status": "in_progress", "current_time": 0,
+        MatchTick.model_validate({"status": "in_progress", "phase": "PLAYING",
+            "pause_duration": None, "pause_remaining": None, "current_time": 0,
             "score": {"home": 0, "away": 0}, "ball": {"x": float("nan"), "y": 0}, "players": []})
+
+
+@pytest.mark.parametrize("status,phase,duration,remaining", [
+    ("in_progress", "PLAYING", 15, None),
+    ("paused", "HYDRATION", None, 15.0),
+    ("paused", "HYDRATION", 15, None),
+    ("in_progress", "PLAYING", None, 5.0),
+    ("paused", "PLAYING", None, None),
+], ids=["duration_outside_pause", "pause_without_duration", "pause_without_remaining",
+        "remaining_outside_pause", "phase_status_mismatch"])
+def test_rejects_inconsistent_phase(match_scenario, status, phase, duration, remaining):
+    data = match_scenario.tick.model_dump()
+    data.update(status=status, phase=phase, pause_duration=duration, pause_remaining=remaining)
+    with pytest.raises(ValidationError):
+        MatchTick.model_validate(data)
 
 
 def test_get_is_only_public_operation(client, published_match):
@@ -337,9 +356,10 @@ def test_mocked_engine_publishes_match_lifecycle(client, db, match_scenario, sta
     snapshots = [
         initial,
         goal,
-        {**goal, "status": "paused", "actions": [{"type": "pause"}]},
+        {**goal, "status": "paused", "phase": "HYDRATION", "pause_duration": 15,
+         "pause_remaining": 10.0, "actions": [{"type": "pause"}]},
         {**goal, "actions": [{"type": "resume"}]},
-        {**goal, "status": "finished", "current_time": 300, "actions": []},
+        {**goal, "status": "finished", "phase": "FINISHED", "current_time": 300, "actions": []},
     ]
     ticks = [MatchTick.model_validate(snapshot) for snapshot in snapshots]
     state_engine.capture_state.side_effect = ticks
@@ -356,6 +376,9 @@ def test_mocked_engine_publishes_match_lifecycle(client, db, match_scenario, sta
         state = states[0]
         assert state["revision"] == revision
         assert state["status"] == tick.status
+        assert state["phase"] == tick.phase
+        assert state["pause_duration"] == tick.pause_duration
+        assert state["pause_remaining"] == tick.pause_remaining
         assert state["score"] == tick.score.model_dump()
         assert state["current_time"] == tick.current_time
         assert state["remaining_time"] == 300 - tick.current_time
