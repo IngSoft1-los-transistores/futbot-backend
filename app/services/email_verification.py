@@ -1,5 +1,4 @@
 import logging
-import smtplib
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from secrets import token_urlsafe
@@ -14,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.models.email_verification import EmailVerificationToken, VerificationRateLimit
 from app.models.user import User
-from app.services.email_sender import EmailSender
+from app.services.email_sender import EmailSender, log_email_error
 
 logger = logging.getLogger(__name__)
 GENERIC_RESPONSE = {"detail": "Si corresponde, recibirás un correo de verificación."}
@@ -63,17 +62,7 @@ def issue_verification(db: Session, user: User, sender: EmailSender) -> None:
     try:
         sender.send_verification(email, url)
     except Exception as error:
-        # No incluir el texto de la excepción, destinatarios, credenciales ni tokens.
-        codes = []
-        if isinstance(error, smtplib.SMTPResponseException):
-            codes = [error.smtp_code]
-        elif isinstance(error, smtplib.SMTPRecipientsRefused):
-            codes = [response[0] for response in error.recipients.values()]
-        safe_codes = sorted({code for code in codes if isinstance(code, int)})
-        logger.warning(
-            "No se pudo enviar el correo de verificación (tipo=%s, códigos SMTP=%s)",
-            type(error).__name__, safe_codes,
-        )
+        log_email_error(logger, "verificación", error)
 
 
 def verify_email(db: Session, token: str) -> dict[str, str]:
