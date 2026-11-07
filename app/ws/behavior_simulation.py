@@ -1,16 +1,3 @@
-"""
-Su responsabilidad debe ser solamente:
-
-1. aceptar conexión;
-2. autenticar;
-3. validar el club;
-4. iniciar la simulación;
-5. enviar los ticks;
-6. cancelar si el cliente se desconecta.
-
-El WebSocket no debería construir `PlayerSpec` ni conocer detalles de física.
-
-"""
 import logging
 from datetime import datetime, timezone
 
@@ -20,7 +7,6 @@ from app.db.session import get_db
 from app.models.user import User
 from app.routers.behaviors import _ws_tickets
 from app.services.behavior_simulation import run_simulation
-from app.schemas.behavior_simulation import SimulationTicketCreate, SimulationTicketRead
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ws", tags=["behavior_simulation"])
