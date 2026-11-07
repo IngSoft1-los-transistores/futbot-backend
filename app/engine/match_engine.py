@@ -9,7 +9,7 @@ from app.engine.constants import PLAYER_RADIUS
 
 from app.engine.action import NULL_ACTION, Action
 from app.engine.tick_context import TickContext
-from app.engine.state import Teamññ
+from app.engine.state import Team
 from app.behaviors import executor
 from app.engine.physics import (
     apply_kick, check_goal, move_player, resolve_possession, step_ball,
@@ -42,6 +42,7 @@ class MatchEngine:
         )
         self._busy: dict[str, asyncio.Future] = {}
         self._club_ids = club_ids or {}
+        self._pending_behavior_changes: list[tuple[str, str]] = []
 
     async def _collect_actions(self) -> dict[str, Action]:
         ctx = TickContext(self.state, self.field, self.behavior_ids)
@@ -111,6 +112,7 @@ class MatchEngine:
     # ---------- Un tick ----------
     async def tick(self) -> None:
         s = self.state
+        self._apply_pending_behavior_changes()
         if s.phase == MatchPhase.FINISHED:
             return
         if s.phase == MatchPhase.PLAY:
@@ -212,4 +214,16 @@ class MatchEngine:
             if cid == club_id:
                 return team
         return None
-    
+
+    def request_behavior_change(self, club_id: str, player_id: str, behavior_id: str) -> None:
+        team = self.team_of_club(club_id)
+        if team is None:
+            raise ValueError("El club no juega este partido")
+        if not any(p.id == player_id and p.team == team for p in self.state.players):
+            raise ValueError("El jugador no es titular de este club")
+        self._pending_behavior_changes.append((player_id, behavior_id))
+
+    def _apply_pending_behavior_changes(self) -> None:
+        pending, self._pending_behavior_changes = self._pending_behavior_changes, []
+        for player_id, behavior_id in pending:
+            self.behavior_ids[player_id] = behavior_id
