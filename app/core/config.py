@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     smtp_starttls: bool = True
     smtp_timeout_seconds: int = Field(default=10, gt=0)
 
+    password_reset_expire_minutes: int = Field(default=30, gt=0)
+    password_reset_url: str = "http://localhost:5173/reset-password"
+    password_reset_interval_seconds: int = Field(default=60, gt=0)
+    password_reset_ip_limit: int = Field(default=10, gt=0)
+    password_reset_ip_window_seconds: int = Field(default=3600, gt=0)
+
     #CORS
     cors_origins_list: list[str] = Field(
         default=["http://localhost:5173"],
