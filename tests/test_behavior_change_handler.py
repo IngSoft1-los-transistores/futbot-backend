@@ -78,7 +78,7 @@ async def test_valid_change_is_queued_and_confirmed(db, club, match_engine, sock
     await handle_change_behavior(socket, db.get_bind(), match_engine, club.id, payload)
 
     assert socket.sent == [
-        {"type": "behavior_change_accepted", "playerId": "h0", "behaviorId": behavior.id}
+        {"event": "BEHAVIOR_CHANGED", "payload": {"playerId": "h0", "behaviorId": behavior.id}}
     ]
     assert match_engine._pending_behavior_changes == [("h0", behavior.id)]
     assert match_engine.behavior_ids["h0"] == "b"  # todavía no rige: falta el tick
@@ -92,7 +92,7 @@ async def test_preprogrammed_behavior_is_accepted(
 
     await handle_change_behavior(socket, db.get_bind(), match_engine, club.id, payload)
 
-    assert socket.sent[0]["type"] == "behavior_change_accepted"
+    assert socket.sent[0]["event"] == "BEHAVIOR_CHANGED"
 
 
 @pytest.mark.asyncio

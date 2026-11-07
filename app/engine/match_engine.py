@@ -419,7 +419,7 @@ class MatchEngine:
         if team is None:
             raise ValueError("El club no juega este partido")
         if not any(p.id == player_id and p.team == team for p in self.state.players):
-            raise ValueError("El jugador no es titular de este club")
+            raise ValueError("El jugador no pertenece a tu club.")
         self._pending_behavior_changes.append((player_id, behavior_id))
 
     def _apply_pending_behavior_changes(self) -> None:

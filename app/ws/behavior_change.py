@@ -42,5 +42,5 @@ async def handle_change_behavior(socket: WebSocket, bind, engine, club_id: str, 
         await socket.send_json({"type": "error", "status": error.status, "message": error.message})
         return
     await socket.send_json(
-        {"type": "behavior_change_accepted", "playerId": player_id, "behaviorId": behavior_id}
+        {"event": "BEHAVIOR_CHANGED", "payload": {"playerId": player_id, "behaviorId": behavior_id}}
     )
