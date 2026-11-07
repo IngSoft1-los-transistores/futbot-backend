@@ -59,6 +59,7 @@ def build_engine_from_db(
     )
     engine = MatchEngine(
         state, field, cfg, behaviors, schedule=schedule,
+        club_ids={Team.HOME: match.home_club_id, Team.AWAY: match.away_club_id},
     )
     for team, specs in substitutes.items():
         for spec in specs:
