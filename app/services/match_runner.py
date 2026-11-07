@@ -51,6 +51,7 @@ def build_engine_from_db(
     )
     return MatchEngine(
         state, field, cfg, behaviors, schedule=schedule,
+        club_ids={Team.HOME: match.home_club_id, Team.AWAY: match.away_club_id},
     )
 
 

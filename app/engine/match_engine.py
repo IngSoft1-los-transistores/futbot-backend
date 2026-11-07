@@ -9,6 +9,7 @@ from app.engine.constants import PLAYER_RADIUS
 
 from app.engine.action import NULL_ACTION, Action
 from app.engine.tick_context import TickContext
+from app.engine.state import Teamññ
 from app.behaviors import executor
 from app.engine.physics import (
     apply_kick, check_goal, move_player, resolve_possession, step_ball,
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 class MatchEngine:
     def __init__(self, state: MatchState, field, cfg, behavior_ids: dict[str, str], schedule: list[Segment] | None = None, rng: random.Random | None = None,
         on_finish: Callable[[MatchState], Awaitable[None]] | None = None,
-        realtime: bool = True,) -> None:
+        realtime: bool = True,club_ids: dict[Team, str] | None = None,) -> None:
         self.state = state
         self.field = field
         self.cfg = cfg
@@ -40,6 +41,7 @@ class MatchEngine:
             max_workers=len(state.players), thread_name_prefix="bot"
         )
         self._busy: dict[str, asyncio.Future] = {}
+        self._club_ids = club_ids or {}
 
     async def _collect_actions(self) -> dict[str, Action]:
         ctx = TickContext(self.state, self.field, self.behavior_ids)
@@ -204,3 +206,10 @@ class MatchEngine:
                 await self.on_finish(self.state)
             except Exception:
                 logger.exception("Falló on_finish (persistencia/WebSocket)")    
+    
+    def team_of_club(self, club_id: str) -> Team | None:
+        for team, cid in self._club_ids.items():
+            if cid == club_id:
+                return team
+        return None
+    
