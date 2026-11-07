@@ -116,7 +116,11 @@ def comportamiento_prueba(db: Session) -> Behavior:
     """
     behavior = Behavior(
         name="Ataque Directo",
-        code="ATAQUE_DIRECTO",
+        code="""
+def behavior(player):
+    pelota = player.encontrar_pelota()
+    player.correr(pelota)
+""",
         is_preprogrammed=True,
     )
     db.add(behavior)
@@ -198,6 +202,36 @@ def other_club(db: Session) -> Club:
     db.commit()
     return other_user.club
 
+@pytest.fixture
+def other_club_players(crear_player, other_club) -> list[Player]:
+    """Crea 6 jugadores del otro club usando la fábrica crear_player."""
+    return [crear_player(other_club.id, name=f"Other Player {i + 1}") for i in range(6)]
+
+@pytest.fixture
+def add_default_behaviors(db: Session):
+    """Agrega comportamientos preprogramados por defecto a la base de datos de prueba."""
+    behaviors = [
+        Behavior(
+            name="defense",
+            code="""
+                def behavior(player):
+                    # Comportamiento de defensa genérico
+                    player.correr((0, 0))  # Ir a una posición defensiva
+            """,
+            is_preprogrammed=True,
+        ),
+        Behavior(
+            name="goalkeeper",
+            code="""
+                def behavior(player):
+                    # Comportamiento de portero genérico
+                    player.quedarse_en_porteria()  # Mantenerse en la portería
+            """,
+            is_preprogrammed=True,
+        ),
+    ]
+    db.add_all(behaviors)
+    db.commit()
 
 @pytest.fixture(autouse=True)
 def email_sender():
