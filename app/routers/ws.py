@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, status
+import asyncio
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -8,6 +10,7 @@ from app.models.club import Club
 from app.models.user import User
 from app.ws.manager import room_manager as manager
 from app.ws.manager import league_manager
+from app.services.league_orchestrator import get_league_lobby_payload, run_next_league_match
 
 
 router = APIRouter()
@@ -237,6 +240,9 @@ async def league_waiting_room_ws(websocket: WebSocket,
                         current_room.status = ROOM_STATUS_IN_PROGRESS
                         action_db.commit()
 
+                        # Disparar el orquestrador 
+                        asyncio.create_task(run_next_league_match(action_db.get_bind(), league_id))
+
                         await league_manager.broadcast_waiting(league_id, {
                             "type": "league_started",
                             "redirect_url": f"/league/{league_id}/active"
@@ -259,3 +265,74 @@ async def league_waiting_room_ws(websocket: WebSocket,
             payload_disc = get_room_payload(disc_db)
             if payload_disc:
                 await league_manager.broadcast_waiting(league_id, payload_disc)
+
+
+@router.websocket("/ws/league/{league_id}/active")
+async def league_active_room_ws(
+    websocket: WebSocket,
+    league_id: str,
+    club_id: str,
+    db: Session = Depends(get_db),
+):
+    await websocket.accept()
+
+    # Validacion de token
+    token = websocket.query_params.get("token")
+    if not token:
+        auth_header = websocket.headers.get("authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+
+    user = None
+    if token:
+        try:
+            from app.core.security import decode_access_token
+            from app.models.auth_session import AuthSession
+            from time import time
+            claims = decode_access_token(token)
+            session = db.get(AuthSession, claims.get("sid"))
+            if session and not session.revoked and session.expires_at > time():
+                user = db.get(User, claims.get("sub"))
+        except Exception:
+            pass
+
+    club_obj = db.get(Club, club_id) if club_id else None
+    if not user or not club_obj or club_obj.user_id != user.id:
+        await websocket.close(code=4008, reason="No autorizado o token inválido.")
+        db.close()
+        return
+
+    room = db.get(Room, league_id)
+    if not room or room.status != ROOM_STATUS_IN_PROGRESS:
+        await websocket.close(code=4404, reason="La liga no está activa.")
+        db.close()
+        return
+
+    enrolled = db.execute(
+        select(Enrollment).where(Enrollment.room_id == league_id, Enrollment.club_id == club_id)
+    ).scalar_one_or_none() is not None
+
+    if not enrolled:
+        await websocket.close(code=4403, reason="El club no pertenece a esta liga.")
+        db.close()
+        return
+
+    db.close()
+
+    # Registra al cliente
+    await league_manager.connect_active(league_id, club_id, websocket)
+
+    # Envia foto inicial al cliente conectado
+    initial_payload = get_league_lobby_payload(db, league_id)
+    db.close()
+
+    if initial_payload:
+        await websocket.send_json(initial_payload)
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            if data.get("action") == "ping":
+                await websocket.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        league_manager.disconnect_active(league_id, club_id)
