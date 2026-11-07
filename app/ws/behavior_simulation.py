@@ -48,7 +48,7 @@ async def ws_simulate_behavior(
       send_tick_callback=send_tick
     )
     # Si la simulación termina normalmente, enviamos un mensaje final
-    await websocket.send_json({"message": "Simulation finished", "reason": "timeout" })
+    await websocket.send_json({"type": "simulation_finished", "reason": "timeout"})
   except WebSocketDisconnect:
     logger.info("WebSocket disconnected")
   except ValueError as e:
