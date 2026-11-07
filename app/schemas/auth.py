@@ -58,5 +58,13 @@ class CurrentUserResponse(BaseModel):
     club_id: UUID
 
 
+class VerifyEmailRequest(BaseModel):
+    token: SecretStr = Field(min_length=1, max_length=512)
+
+
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
+
+
 class RefreshRequest(BaseModel):
     refresh_token: SecretStr

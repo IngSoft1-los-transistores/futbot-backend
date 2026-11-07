@@ -237,6 +237,31 @@ Mensajes del servidor:
   Estos cierran la conexión y no provocan reintentos del frontend.
 - `{"type":"ping"}` cada 15 segundos; el cliente responde
   `{"type":"pong"}`. Es mantenimiento de conexión, no consulta de estado.
+- `{"type":"SUBSTITUTION_SCHEDULED","ok":true,"status":"scheduled",...}`:
+  sustitución aceptada durante el juego; queda pendiente hasta la siguiente
+  pausa. `{"type":"SUBSTITUTION_APPLIED","ok":true,"status":"applied",...}`
+  confirma que el cambio ya se aplicó.
+- `{"type":"SUBSTITUTION_STATE","pendingSubstitution":...,"changesUsedThisPause":0}`:
+  estado privado del club autenticado al conectar o reconectar. No se incluye
+  en los snapshots compartidos con ambos clubes.
+
+El cliente puede solicitar un cambio enviando
+`{"type":"SUBSTITUTE_PLAYER","outPlayerId":"<id titular>","inPlayerId":"<id suplente>"}`.
+El servidor determina el club a partir de la sesión autenticada (no acepta un
+`club_id` del cliente). Los identificadores deben pertenecer al partido; el que
+sale debe estar en cancha y el que entra debe ser suplente de ese mismo club.
+Durante el juego se acepta como máximo una solicitud pendiente por club y se
+aplica en la próxima pausa; si ya no quedan pausas, se rechaza. Durante una
+pausa se aplica inmediatamente y se permite como máximo un cambio por club en
+esa pausa. Los rechazos se devuelven solo al socket que hizo la solicitud como
+`{"type":"error","ok":false,"error_code":"SUBSTITUTION_LIMIT_REACHED","message":"..."}`.
+El cliente debe tomar decisiones por `error_code`, no por el texto del mensaje.
+Los eventos programados y aplicados se envían a todos los sockets autorizados de
+ese partido.
+
+El motor mantiene titulares y suplentes en memoria mientras corre el partido.
+Esta operación no modifica la convocatoria original en la base de datos; los
+snapshots reflejan qué jugadores están en cancha en cada tick.
 
 El último snapshot se guarda en `app/engine/live_state.py`, en un diccionario
 por `match_id`. `publish_match_state` valida el tick, actualiza ese diccionario y
@@ -309,3 +334,39 @@ uvicorn app.main:app --reload --port 8001
 ```
 
 Si se cambia el puerto, hay que actualizar `VITE_API_URL` y `VITE_WS_URL` en el frontend.
+
+
+## Verificación de correo
+
+El registro conserva la respuesta 201 y crea una cuenta con `email_verified_at = null`.
+La cuenta y el hash del token se confirman antes del envío SMTP. Si el envío falla,
+la cuenta permanece creada y puede solicitar un nuevo enlace. El token dura 24 horas
+por defecto, solo se guarda su SHA-256 y nunca se incluye en la respuesta del registro.
+
+- `POST /api/auth/verify-email`, body `{"token": "..."}`: devuelve 200 al verificar.
+  Repetir un token ya consumido devuelve 200 sin cambiar la fecha, incluso después
+  de su vencimiento. Un token vencido devuelve 400 / `EMAIL_VERIFICATION_TOKEN_EXPIRED`;
+  uno desconocido o invalidado devuelve 400 / `EMAIL_VERIFICATION_TOKEN_INVALID`.
+- `POST /api/auth/resend-verification`, body `{"email": "usuario@example.com"}`:
+  devuelve siempre 200 con un mensaje genérico para emails válidos, aunque no existan,
+  estén verificados o se haya alcanzado el límite. Cada reenvío invalida enlaces pendientes.
+  Por defecto permite un reenvío por minuto por email y diez solicitudes por hora por IP.
+  Los contadores se guardan en la base y se comparten entre workers; los emails e IPs
+  se usan como hashes en sus claves. Las ventanas vencidas se reutilizan al recibir otra solicitud.
+- Login y refresh rechazan cuentas sin verificar con 403 / `EMAIL_NOT_VERIFIED`.
+  Las credenciales incorrectas siguen devolviendo 401.
+
+Configurar las variables SMTP y `EMAIL_VERIFICATION_URL` de `.env.example` antes de
+usar correo real. El proveedor implementa `EmailSender`; los tests sustituyen la
+dependencia `get_email_sender` por un fake, sin conexiones SMTP. No se envían emails
+reales al ejecutar las pruebas. El enlace apunta a una página del frontend que debe
+leer el token y llamar al endpoint POST; esta implementación agrega únicamente el backend.
+En producción usar HTTPS y configurar correctamente las IPs de proxy confiables en
+Uvicorn: el límite usa `request.client.host`, sin interpretar directamente encabezados enviados por el cliente.
+
+Al arrancar se agrega la columna faltante a `users` y se crean las tablas nuevas,
+sin borrar datos. Las cuentas anteriores quedan sin verificar y deben solicitar
+reenvío antes de su próximo login o refresh. Las sesiones de acceso ya emitidas
+conservan su vigencia. Para actualizar una base existente, realizar el primer arranque
+con un solo proceso antes de levantar los demás workers (la migración aditiva no
+coordina ejecuciones simultáneas). No hace falta borrar `futbot.db`.
