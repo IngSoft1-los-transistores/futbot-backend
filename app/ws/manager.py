@@ -15,6 +15,7 @@ class Subscription:
     session_id: str
     loop: asyncio.AbstractEventLoop
     queue: asyncio.Queue
+    event_queue: asyncio.Queue
     active: bool = True
     revoked: bool = False
 
@@ -29,6 +30,10 @@ class Subscription:
 
         self.queue.put_nowait(message)
 
+    def deliver_event(self, message: dict) -> None:
+        if self.active and not self.revoked:
+            self.event_queue.put_nowait(message)
+
 
 class ConnectionManager:
     def __init__(self) -> None:
@@ -41,6 +46,7 @@ class ConnectionManager:
             session_id=session_id,
             loop=asyncio.get_running_loop(),
             queue=asyncio.Queue(maxsize=1),
+            event_queue=asyncio.Queue(),
         )
         with self._lock:
             self._subscriptions.add(subscription)
@@ -71,6 +77,17 @@ class ConnectionManager:
                     and not subscription.revoked
                 ):
                     self._notify(subscription, message)
+
+    def broadcast_event(self, match_id: str, message: dict) -> None:
+        with self._lock:
+            for subscription in tuple(self._subscriptions):
+                if subscription.match_id == str(match_id) and not subscription.revoked:
+                    try:
+                        subscription.loop.call_soon_threadsafe(
+                            subscription.deliver_event, message
+                        )
+                    except RuntimeError:
+                        self.unsubscribe(subscription)
 
     def revoke_session(self, session_id: str) -> None:
         with self._lock:
@@ -118,3 +135,35 @@ class RoomConnectionManager:
 
 
 room_manager = RoomConnectionManager()
+
+class LeagueRoomManager:
+    def __init__(self) -> None:
+        self.waiting_rooms: dict[str, dict[str, WebSocket]] = {}
+        self.active_rooms: dict[str, dict[str, WebSocket]] = {}
+
+    def get_rooms_user_count(self, league_id: str, is_active: bool = False) -> int:
+        rooms = self.active_rooms if is_active else self.waiting_rooms
+        return len(rooms.get(league_id, {}))
+
+    async def connect_waiting(self, league_id: str, club_id: str, ws: WebSocket, max_clubs: int) -> bool:
+        if league_id not in self.waiting_rooms:
+            self.waiting_rooms[league_id] = {}
+
+        if club_id not in self.waiting_rooms[league_id] and len(self.waiting_rooms[league_id]) >= max_clubs:
+            return False
+
+        self.waiting_rooms[league_id][club_id] = ws
+        return True
+
+    def disconnect_waiting(self, league_id: str, club_id: str):
+        if league_id in self.waiting_rooms:
+            self.waiting_rooms[league_id].pop(club_id, None)
+            if not self.waiting_rooms[league_id]:
+                del self.waiting_rooms[league_id]
+
+    async def broadcast_waiting(self, league_id: str, message: dict, exclude_club_id: str = None):
+        for club_id, ws in list(self.waiting_rooms.get(league_id, {}).items()):
+            if club_id != exclude_club_id:
+                await ws.send_json(message)
+
+league_manager= LeagueRoomManager()
