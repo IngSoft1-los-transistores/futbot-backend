@@ -14,11 +14,17 @@ from app.engine.state import MatchPhase, Team, publish_engine_tick
 from app.models.match import ESTADO_IN_PROGRESS, ESTADO_PRE_MATCH, Match
 from app.models.match_player import MatchPlayer
 from app.models.player import Player
-from app.schemas.match_state import MatchTick
+from app.schemas.match_state import PHASE_STATUS, MatchTick
 
 logger = logging.getLogger(__name__)
 Notifier = Callable[[str, dict], Awaitable[None]]
 _running: dict[str, asyncio.Task] = {}
+TICK_PHASES = {
+    MatchPhase.PLAY: "PLAYING",
+    MatchPhase.HYDRATION: "HYDRATION",
+    MatchPhase.HALFTIME: "HALFTIME",
+    MatchPhase.FINISHED: "FINISHED",
+}
 
 
 def build_engine_from_db(
@@ -60,11 +66,12 @@ def capture_tick(engine, roster, club_of, previous_goals=0):
         return {"x": (point.x / field.length - .5) * 100,
                 "y": (point.y / field.width - .5) * 60}
     active = {player.id: player for player in state.players}
-    status = ("finished" if state.phase == MatchPhase.FINISHED else
-              "paused" if state.phase in (MatchPhase.HYDRATION, MatchPhase.HALFTIME)
-              else "in_progress")
+    phase = TICK_PHASES[state.phase]
     return MatchTick.model_validate({
-        "status": status,
+        "status": PHASE_STATUS[phase],
+        "phase": phase,
+        "pause_duration": engine.pause_seconds,
+        "pause_remaining": engine.pause_remaining_seconds,
         "current_time": state.play_ticks / engine.cfg.match_tick_rate,
         "score": {"home": state.score[Team.HOME], "away": state.score[Team.AWAY]},
         "players": [{"player_id": pid, "on_field": pid in active,
