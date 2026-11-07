@@ -4,7 +4,7 @@ from app.services.exceptions_player import AppException
 
 class LeagueNotFound(AppException):
     def __init__(self):
-        super().__init__(message="League does not exist.", code="LEAGUE_NOT_FOUND")
+        super().__init__(message="La liga no existe.", code="LEAGUE_NOT_FOUND")
 
 
 # Ticket: [BE] Create League

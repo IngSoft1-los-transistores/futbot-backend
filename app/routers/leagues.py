@@ -1,7 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import asyncio
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_club, get_current_user
+from app.core.dependencies import get_current_club, get_current_user, get_user_from_token
 from app.db.session import get_db
 from app.models.club import Club
 from app.models.user import User
@@ -18,11 +28,14 @@ from app.services.league_service import (
     create_league,
     get_league_standings,
 )
+from app.ws.leagues_hub import leagues_hub
 
 router = APIRouter(
     prefix="/api",
     tags=["Leagues"]
 )
+
+STANDINGS_AUTH_TIMEOUT_SECONDS = 5
 
 
 @router.get(
@@ -67,3 +80,49 @@ def league_standings(
         return get_league_standings(db, league_id)
     except LeagueNotFound as error:
         raise HTTPException(status_code=404, detail=error.message) from error
+
+
+@router.websocket("/leagues/{league_id}/standings/ws")
+async def league_standings_ws(
+    websocket: WebSocket,
+    league_id: str,
+    db: Session = Depends(get_db),
+) -> None:
+    await websocket.accept()
+    try:
+        first = await asyncio.wait_for(
+            websocket.receive_json(), timeout=STANDINGS_AUTH_TIMEOUT_SECONDS
+        )
+    except WebSocketDisconnect:
+        return
+    except (asyncio.TimeoutError, ValueError):
+        await websocket.close(code=4401)
+        return
+
+    user = None
+    if isinstance(first, dict) and first.get("type") == "auth":
+        user = get_user_from_token(db, first.get("token"))
+    if user is None:
+        await websocket.close(code=4401)
+        return
+
+    leagues_hub.add_standings_subscriber(websocket, league_id)
+    try:
+        try:
+            standings = get_league_standings(db, league_id)
+        except LeagueNotFound:
+            await websocket.close(code=4404)
+            return
+        finally:
+            db.close()
+        await websocket.send_json({
+            "type": "standings",
+            "league_id": league_id,
+            "standings": [row.model_dump(mode="json") for row in standings],
+        })
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        leagues_hub.remove(websocket)

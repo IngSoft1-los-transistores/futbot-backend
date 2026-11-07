@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from starlette.websockets import WebSocketDisconnect
 
 from app.models.club import Club
+from app.models.match import ESTADO_FINISHED, Match
 from app.models.room import ROOM_STATUS_CANCELLED
 from app.ws.leagues_hub import leagues_hub
 from tests.test_list_leagues import crear_club, crear_liga
@@ -20,8 +21,10 @@ AUTH = {"type": "auth", "token": "token-ok"}
 @pytest.fixture(autouse=True)
 def limpiar_hub():
     leagues_hub.filters.clear()          # el hub es global: evita que un test contamine a otro
+    leagues_hub.standings_subscribers.clear()
     yield
     leagues_hub.filters.clear()
+    leagues_hub.standings_subscribers.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -121,6 +124,60 @@ def test_sin_ligas_envia_un_listado_vacio(client: TestClient, token_valido) -> N
         ws.send_json(AUTH)
 
         assert ws.receive_json() == {"type": "leagues", "name": "", "leagues": []}
+
+
+def test_standings_ws_sends_initial_table_and_subscribes(
+    client: TestClient, db: Session, creador: Club, monkeypatch
+) -> None:
+    visitante = crear_club(db, "visitante")
+    liga = crear_liga(db, creador, "Liga en vivo", inscriptos=(creador, visitante))
+    monkeypatch.setattr(
+        "app.routers.leagues.get_user_from_token",
+        lambda db, token: object() if token == "token-ok" else None,
+    )
+
+    with client.websocket_connect(
+        f"/api/leagues/{liga.id}/standings/ws"
+    ) as websocket:
+        websocket.send_json(AUTH)
+        message = websocket.receive_json()
+        assert message["type"] == "standings"
+        assert message["league_id"] == liga.id
+        assert len(message["standings"]) == 2
+        assert liga.id in leagues_hub.standings_subscribers.values()
+
+    assert liga.id not in leagues_hub.standings_subscribers.values()
+
+
+def test_finishing_a_league_match_broadcasts_updated_standings(
+    db: Session, creador: Club
+) -> None:
+    visitante = crear_club(db, "visitante")
+    liga = crear_liga(db, creador, "Liga en vivo", inscriptos=(creador, visitante))
+    partido = Match(
+        room_id=liga.id,
+        home_club_id=creador.id,
+        away_club_id=visitante.id,
+        status=ESTADO_FINISHED,
+        home_goals=2,
+        away_goals=1,
+        duration_seconds=600,
+    )
+    db.add(partido)
+    db.commit()
+    websocket = AsyncMock()
+    leagues_hub.add_standings_subscriber(websocket, liga.id)
+
+    asyncio.run(leagues_hub.broadcast_standings_updated(liga.id, partido.id))
+
+    message = websocket.send_json.await_args.args[0]
+    assert message["type"] == "standings_updated"
+    assert message["league_id"] == liga.id
+    assert message["match_id"] == partido.id
+    assert {row["club_id"]: row["points"] for row in message["standings"]} == {
+        creador.id: 3,
+        visitante.id: 0,
+    }
 
 
 # --- Búsqueda ---

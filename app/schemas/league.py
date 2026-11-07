@@ -44,6 +44,7 @@ class ListLeagueResponse(BaseModel):
     participants_count: int
     started: bool
     is_private: bool
+    has_penalty_shootout: bool
 
 
 class LeagueStanding(BaseModel):

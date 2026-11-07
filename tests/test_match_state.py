@@ -261,6 +261,42 @@ def test_paused_and_finished_states_and_no_reopening(db, published_match):
         publish_match_state(db, scenario.match.id, scenario.tick, expected_revision=3)
 
 
+def test_finishing_league_match_notifies_standings_subscribers(
+    db, match_scenario, state_engine, monkeypatch
+):
+    from app.models.enrollment import Enrollment
+    from app.models.room import ROOM_TYPE_PUBLIC, Room
+    from app.ws.leagues_hub import leagues_hub
+
+    scenario = match_scenario
+    league = Room(
+        type=ROOM_TYPE_PUBLIC,
+        name="Liga en vivo",
+        creator_club_id=scenario.home.id,
+        min_clubs=3,
+        max_clubs=30,
+        match_duration_minutes=5,
+    )
+    db.add(league)
+    db.flush()
+    db.add_all(
+        Enrollment(room_id=league.id, club_id=club.id)
+        for club in (scenario.home, scenario.away)
+    )
+    scenario.match.room_id = league.id
+    db.commit()
+
+    notify = Mock()
+    monkeypatch.setattr(leagues_hub, "notify_standings_updated", notify)
+    publish_engine_state(db, scenario.match.id, state_engine, expected_revision=0)
+    final_tick = scenario.tick.model_copy(
+        update={"status": "finished", "current_time": scenario.match.duration_seconds}
+    )
+    publish_engine_tick(db, scenario.match.id, final_tick, expected_revision=1)
+
+    notify.assert_called_once_with(league.id, scenario.match.id)
+
+
 def test_rejects_non_finite_coordinates():
     with pytest.raises(ValidationError):
         MatchTick.model_validate({"status": "in_progress", "current_time": 0,

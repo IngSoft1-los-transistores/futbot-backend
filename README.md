@@ -269,6 +269,16 @@ nivel `publish_match_state` solo publica; no crea goles ni confirma transaccione
 El motor debe emitir los eventos de gol, no deducir autores a partir del marcador.
 La demo pasa por la capa del motor y sirve de ejemplo de integración.
 
+## Tabla de posiciones en vivo
+
+El endpoint `GET /api/leagues/{league_id}/standings` devuelve la tabla actual.
+Para recibir actualizaciones sin polling, conectar a
+`/api/leagues/{league_id}/standings/ws` y enviar primero
+`{"type":"auth","token":"<access_token>"}`. El servidor responde con
+`{"type":"standings","league_id":"...","standings":[...]}` y envía
+`standings_updated` con la tabla recalculada cada vez que termina un partido de
+esa liga.
+
 Ante una desconexión, la pantalla conserva el último snapshot con una advertencia
 y reconecta con espera progresiva de 1 a 10 segundos. Al reconectar recibe el
 estado vigente y descarta revisiones anteriores. Al finalizar, cierra el socket.
