@@ -10,6 +10,7 @@ class SquadSelection(BaseModel):
 class CreateLeague(BaseModel):
     name: str
     is_private: bool = False
+    has_penalty_shootout: bool = False
     password: str | None = None
     min_clubs: int = Field(gt=0)
     max_clubs: int = Field(gt=0)
@@ -27,6 +28,7 @@ class LeagueResponse(BaseModel):
     id: str
     name: str
     is_private: bool
+    has_penalty_shootout: bool = False
     started: bool
     creator_id: str
     code_to_join: str

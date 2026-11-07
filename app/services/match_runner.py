@@ -14,6 +14,7 @@ from app.engine.state import MatchPhase, PlayerState, Team, Vec2, publish_engine
 from app.models.match import ESTADO_IN_PROGRESS, ESTADO_PRE_MATCH, Match
 from app.models.match_player import MatchPlayer
 from app.models.player import Player
+from app.models.room import Room
 from app.schemas.match_state import MatchTick
 from app.ws.manager import manager
 
@@ -31,6 +32,9 @@ def build_engine_from_db(
     match = db.get(Match, match_id)
     if match is None:
         raise LookupError(f"Partido {match_id} no existe")
+    room = db.get(Room, match.room_id)
+    if room is None:
+        raise LookupError(f"Sala {match.room_id} del partido no existe")
 
     rows = db.execute(
         select(MatchPlayer, Player)
@@ -58,7 +62,12 @@ def build_engine_from_db(
         halftime_seconds=match.pause_duration_seconds,
     )
     engine = MatchEngine(
-        state, field, cfg, behaviors, schedule=schedule,
+        state,
+        field,
+        cfg,
+        behaviors,
+        schedule=schedule,
+        has_penalty_shootout=room.has_penalty_shootout,
     )
     for team, specs in substitutes.items():
         for spec in specs:
@@ -118,6 +127,18 @@ def get_match_substitution_state(match_id: str, club_id: str) -> dict | None:
     }
 
 
+def persist_penalty_winner(sessions, match_id: str, club_id: str) -> None:
+    with sessions() as db:
+        result = db.execute(
+            update(Match)
+            .where(Match.id == match_id)
+            .values(penalty_winner_club_id=club_id)
+        )
+        if result.rowcount != 1:
+            raise LookupError(f"Partido {match_id} no existe al guardar el ganador")
+        db.commit()
+
+
 def capture_tick(engine, roster, club_of, previous_goals=0):
     state, field = engine.state, engine.field
     def position(point):
@@ -125,7 +146,9 @@ def capture_tick(engine, roster, club_of, previous_goals=0):
                 "y": (point.y / field.width - .5) * 60}
     active = {player.id: player for player in state.players}
     status = ("finished" if state.phase == MatchPhase.FINISHED else
-              "paused" if state.phase in (MatchPhase.HYDRATION, MatchPhase.HALFTIME)
+              "paused" if state.phase in (
+                  MatchPhase.HYDRATION, MatchPhase.HALFTIME, MatchPhase.PENALTIES
+              )
               else "in_progress")
     return MatchTick.model_validate({
         "status": status,
@@ -148,12 +171,30 @@ async def _play(match_id, engine, roster, club_of, sessions, notifier):
     deadline = loop.time()
     try:
         while engine.state.phase != MatchPhase.FINISHED:
+            previous_phase = engine.state.phase
             await engine.tick()
             with sessions() as db:
                 published = publish_engine_tick(
                     db, match_id, capture_tick(engine, roster, club_of, goals),
                     expected_revision=revision)
             revision, goals = published.revision, len(engine.state.goals)
+            if (
+                engine.state.phase == MatchPhase.FINISHED
+                and engine.penalty_winner is not None
+            ):
+                persist_penalty_winner(
+                    sessions,
+                    match_id,
+                    club_of[engine.penalty_winner],
+                )
+            if (
+                engine.realtime
+                and previous_phase != MatchPhase.PENALTIES
+                and engine.state.phase == MatchPhase.PENALTIES
+            ):
+                await asyncio.sleep(1)
+                deadline = loop.time()
+                continue
             deadline += engine.dt
             await asyncio.sleep(max(0, deadline - loop.time()) if engine.realtime else 0)
         if notifier:
