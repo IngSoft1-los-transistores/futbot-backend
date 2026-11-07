@@ -172,6 +172,10 @@ async def match_stream(socket: WebSocket, match_id: str, db: Session = Depends(g
                             'message': 'Evento WebSocket no reconocido',
                         })
                 received = asyncio.create_task(socket.receive_text())
+            if event_changed in done:
+                event = event_changed.result()
+                await socket.send_json(event)
+                event_changed = asyncio.create_task(subscription.event_queue.get())
             if changed in done:
                 message = changed.result()
                 if message['type'] == 'revoked' or subscription.revoked:
@@ -183,12 +187,17 @@ async def match_stream(socket: WebSocket, match_id: str, db: Session = Depends(g
                     await socket.send_json(message)
                     revision = state['revision']
                     if state['status'] == 'finished':
+                        # Event delivery callbacks for this tick may still be queued.
+                        await asyncio.sleep(0)
+                        if event_changed.done():
+                            await socket.send_json(event_changed.result())
+                            event_changed = None
+                        while not subscription.event_queue.empty():
+                            await socket.send_json(
+                                subscription.event_queue.get_nowait()
+                            )
                         await socket.close(code=1000)
                         return
-            if event_changed in done:
-                event = event_changed.result()
-                await socket.send_json(event)
-                event_changed = asyncio.create_task(subscription.event_queue.get())
             if not pong_deadline and time() >= next_ping:
                 # Revalidación de permisos; no consulta ni sondea snapshots.
                 await run_in_threadpool(validate_access, bind, match_id, token)

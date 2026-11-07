@@ -261,6 +261,37 @@ def test_paused_and_finished_states_and_no_reopening(db, published_match):
         publish_match_state(db, scenario.match.id, scenario.tick, expected_revision=3)
 
 
+def test_penalty_winner_is_persisted_with_final_state(db, published_match):
+    scenario = published_match
+    data = scenario.tick.model_dump()
+    data.update(
+        status="finished",
+        phase="finished",
+        current_time=300,
+        penalty={
+            "shooter_id": scenario.home_player.id,
+            "goalkeeper_id": scenario.away_player.id,
+            "score": {"home": 0, "away": 0},
+            "attempts": {"home": 5, "away": 5},
+            "seconds_remaining": 0,
+            "winner_club_id": scenario.away.id,
+        },
+    )
+    final = publish_engine_tick(
+        db,
+        scenario.match.id,
+        MatchTick.model_validate(data),
+        expected_revision=1,
+        penalty_winner_club_id=scenario.away.id,
+    )
+
+    db.refresh(scenario.match)
+    assert scenario.match.status == "finished"
+    assert scenario.match.penalty_winner_club_id == scenario.away.id
+    assert final.phase == "finished"
+    assert str(final.penalty.winner_club_id) == scenario.away.id
+
+
 def test_rejects_non_finite_coordinates():
     with pytest.raises(ValidationError):
         MatchTick.model_validate({"status": "in_progress", "current_time": 0,

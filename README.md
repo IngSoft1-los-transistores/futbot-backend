@@ -263,9 +263,17 @@ En las ligas configuradas sin empates, si el tiempo regular termina igualado,
 el motor inicia automáticamente una tanda de penales: hasta cinco intentos por
 club, alternados, con un máximo de 10 segundos de juego por intento. Se emiten
 `PENALTIES_STARTED`, `PENALTY_SHOT_RESULT` y `PENALTIES_FINISHED` con el marcador
-parcial/final; si la tanda termina igualada, `PENALTIES_TIEBREAK` anuncia el
+parcial/final. `PENALTIES_STARTED` informa además `maxSecondsPerAttempt` y
+`tickRate` para sincronizar el reloj visual del cliente con los ticks del motor.
+Si la tanda termina igualada, `PENALTIES_TIEBREAK` anuncia el
 ganador elegido al azar. El ganador queda guardado en
-`matches.penalty_winner_club_id`.
+`matches.penalty_winner_club_id` junto con la publicación del estado final.
+Durante los penales, el snapshot conserva `status: "paused"` e incluye
+`phase: "penalties"` y `penalty` con `shooter_id`, `goalkeeper_id`, el marcador
+y los intentos de la tanda, `seconds_remaining` y, al finalizar,
+`winner_club_id`.
+Los eventos generados en el tick final se entregan antes del cierre normal del
+WebSocket.
 
 El motor mantiene titulares y suplentes en memoria mientras corre el partido.
 Esta operación no modifica la convocatoria original en la base de datos; los

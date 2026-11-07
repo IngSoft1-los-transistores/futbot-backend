@@ -25,6 +25,18 @@ class Score(StateModel):
     away: int = Field(ge=0, le=32767)
 
 
+MatchPhaseName = Literal["pre", "play", "hydration", "halftime", "penalties", "finished"]
+
+
+class PenaltySnapshot(StateModel):
+    shooter_id: UUID | None = None
+    goalkeeper_id: UUID | None = None
+    score: Score
+    attempts: Score
+    seconds_remaining: float = Field(ge=0)
+    winner_club_id: UUID | None = None
+
+
 class PlayerTick(StateModel):
     player_id: UUID
     position: Position | None = None
@@ -46,6 +58,8 @@ class MatchAction(StateModel):
 
 class MatchTick(StateModel):
     status: Literal["in_progress", "paused", "finished"]
+    phase: MatchPhaseName | None = None
+    penalty: PenaltySnapshot | None = None
     current_time: float = Field(ge=0)
     score: Score
     ball: BallState
@@ -71,6 +85,8 @@ class MatchState(StateModel):
     home_club: ClubState
     away_club: ClubState
     status: Literal["in_progress", "paused", "finished"]
+    phase: MatchPhaseName | None = None
+    penalty: PenaltySnapshot | None = None
     score: Score
     result: str
     current_time: float

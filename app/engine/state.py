@@ -1,5 +1,6 @@
 """Punto de integración del motor: ticks en memoria y eventos durables."""
 from collections import Counter
+from collections.abc import Iterable
 from typing import Protocol
 
 from sqlalchemy import exists, select, update
@@ -41,7 +42,15 @@ def publish_engine_state(db: Session, match_id: str, engine: MatchStateSource, *
     return publish_engine_tick(db, match_id, engine.capture_state(), expected_revision=expected_revision)
 
 
-def publish_engine_tick(db: Session, match_id: str, tick: MatchTick, *, expected_revision: int) -> MatchState:
+def publish_engine_tick(
+    db: Session,
+    match_id: str,
+    tick: MatchTick,
+    *,
+    expected_revision: int,
+    penalty_winner_club_id: str | None = None,
+    events: Iterable[dict] = (),
+) -> MatchState:
     """Usar una sesión limpia y datos de creación ya confirmados.
 
     Solo hace commit ante goles o cambios de estado (pausa/reanudación/fin).
@@ -52,6 +61,11 @@ def publish_engine_tick(db: Session, match_id: str, tick: MatchTick, *, expected
     with match_states.lock(match_id):
         state = prepare_match_state(db, match_id, tick, expected_revision=expected_revision)
         match = db.get(Match, match_id)
+        if penalty_winner_club_id is not None:
+            if tick.status != "finished":
+                raise ValueError("El ganador de penales solo puede guardarse al finalizar")
+            if penalty_winner_club_id not in (match.home_club_id, match.away_club_id):
+                raise ValueError("El ganador de penales debe participar del partido")
         goals = [action for action in state.actions if action.type == 'goal']
         counts = Counter(str(goal.club_id) for goal in goals)
         expected = Counter({
@@ -74,6 +88,8 @@ def publish_engine_tick(db: Session, match_id: str, tick: MatchTick, *, expected
                         entry.goals += 1
                 match.home_goals, match.away_goals = state.score.home, state.score.away
                 match.status = state.status
+                if penalty_winner_club_id is not None:
+                    match.penalty_winner_club_id = penalty_winner_club_id
                 if state.status == 'finished':
                     match.finished_at = ahora_utc()
                     room = db.get(Room, match.room_id)
@@ -101,7 +117,7 @@ def publish_engine_tick(db: Session, match_id: str, tick: MatchTick, *, expected
             except Exception:
                 db.rollback()
                 raise
-        publish_prepared_state(state)
+        publish_prepared_state(state, events=events)
         return state
 
 @dataclass(frozen=True, slots=True) #vector 2D

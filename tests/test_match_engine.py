@@ -109,6 +109,8 @@ async def test_tied_match_enters_penalties_when_enabled(make_engine):
     assert eng.state.phase == P.PENALTIES
     assert eng.penalty_attempts == {Team.HOME: 0, Team.AWAY: 0}
     assert eng.ws_events[-1]["type"] == "PENALTIES_STARTED"
+    assert eng.ws_events[-1]["maxSecondsPerAttempt"] == 10
+    assert eng.ws_events[-1]["tickRate"] == eng.cfg.match_tick_rate
 
 
 @pytest.mark.asyncio

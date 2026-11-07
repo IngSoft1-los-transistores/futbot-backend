@@ -317,6 +317,7 @@ class MatchEngine:
             status="started",
             maxAttemptsPerTeam=PENALTIES_PER_TEAM,
             maxSecondsPerAttempt=PENALTY_MAX_SECONDS,
+            tickRate=self.cfg.match_tick_rate,
         )
         self._start_penalty_attempt()
 

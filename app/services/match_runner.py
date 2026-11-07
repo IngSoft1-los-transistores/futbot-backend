@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.db.base import ahora_utc
 from app.engine.field import FieldConfig
 from app.engine.live_state import match_states
-from app.engine.match_engine import MatchEngine
+from app.engine.match_engine import MatchEngine, PENALTY_MAX_SECONDS
 from app.engine.schedule import build_schedule
 from app.engine.setup import PlayerSpec, create_initial_state
 from app.engine.state import MatchPhase, PlayerState, Team, Vec2, publish_engine_tick
@@ -127,18 +127,6 @@ def get_match_substitution_state(match_id: str, club_id: str) -> dict | None:
     }
 
 
-def persist_penalty_winner(sessions, match_id: str, club_id: str) -> None:
-    with sessions() as db:
-        result = db.execute(
-            update(Match)
-            .where(Match.id == match_id)
-            .values(penalty_winner_club_id=club_id)
-        )
-        if result.rowcount != 1:
-            raise LookupError(f"Partido {match_id} no existe al guardar el ganador")
-        db.commit()
-
-
 def capture_tick(engine, roster, club_of, previous_goals=0):
     state, field = engine.state, engine.field
     def position(point):
@@ -150,8 +138,32 @@ def capture_tick(engine, roster, club_of, previous_goals=0):
                   MatchPhase.HYDRATION, MatchPhase.HALFTIME, MatchPhase.PENALTIES
               )
               else "in_progress")
+    penalty = None
+    if engine._penalty_full_roster is not None:
+        penalty = {
+            "shooter_id": engine._penalty_shooter.id if engine._penalty_shooter else None,
+            "goalkeeper_id": engine._penalty_goalkeeper.id if engine._penalty_goalkeeper else None,
+            "score": {
+                Team.HOME.value: engine.penalty_score[Team.HOME],
+                Team.AWAY.value: engine.penalty_score[Team.AWAY],
+            },
+            "attempts": {
+                Team.HOME.value: engine.penalty_attempts[Team.HOME],
+                Team.AWAY.value: engine.penalty_attempts[Team.AWAY],
+            },
+            "seconds_remaining": max(
+                0,
+                PENALTY_MAX_SECONDS - engine._penalty_ticks * engine.dt,
+            ) if state.phase == MatchPhase.PENALTIES else 0,
+            "winner_club_id": (
+                club_of[engine.penalty_winner]
+                if engine.penalty_winner is not None else None
+            ),
+        }
     return MatchTick.model_validate({
         "status": status,
+        "phase": state.phase.value,
+        "penalty": penalty,
         "current_time": state.play_ticks / engine.cfg.match_tick_rate,
         "score": {"home": state.score[Team.HOME], "away": state.score[Team.AWAY]},
         "players": [{"player_id": pid, "on_field": pid in active,
@@ -172,21 +184,24 @@ async def _play(match_id, engine, roster, club_of, sessions, notifier):
     try:
         while engine.state.phase != MatchPhase.FINISHED:
             previous_phase = engine.state.phase
-            await engine.tick()
+            deferred_events = []
+            event_callback = engine.on_ws_event
+            engine.on_ws_event = deferred_events.append
+            try:
+                await engine.tick()
+            finally:
+                engine.on_ws_event = event_callback
             with sessions() as db:
                 published = publish_engine_tick(
                     db, match_id, capture_tick(engine, roster, club_of, goals),
-                    expected_revision=revision)
-            revision, goals = published.revision, len(engine.state.goals)
-            if (
-                engine.state.phase == MatchPhase.FINISHED
-                and engine.penalty_winner is not None
-            ):
-                persist_penalty_winner(
-                    sessions,
-                    match_id,
-                    club_of[engine.penalty_winner],
+                    expected_revision=revision,
+                    penalty_winner_club_id=(
+                        club_of[engine.penalty_winner]
+                        if engine.penalty_winner is not None else None
+                    ),
+                    events=deferred_events,
                 )
+            revision, goals = published.revision, len(engine.state.goals)
             if (
                 engine.realtime
                 and previous_phase != MatchPhase.PENALTIES
