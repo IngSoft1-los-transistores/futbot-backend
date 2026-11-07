@@ -15,6 +15,7 @@ class Subscription:
     session_id: str
     loop: asyncio.AbstractEventLoop
     queue: asyncio.Queue
+    event_queue: asyncio.Queue
     active: bool = True
     revoked: bool = False
 
@@ -29,6 +30,10 @@ class Subscription:
 
         self.queue.put_nowait(message)
 
+    def deliver_event(self, message: dict) -> None:
+        if self.active and not self.revoked:
+            self.event_queue.put_nowait(message)
+
 
 class ConnectionManager:
     def __init__(self) -> None:
@@ -41,6 +46,7 @@ class ConnectionManager:
             session_id=session_id,
             loop=asyncio.get_running_loop(),
             queue=asyncio.Queue(maxsize=1),
+            event_queue=asyncio.Queue(),
         )
         with self._lock:
             self._subscriptions.add(subscription)
@@ -71,6 +77,17 @@ class ConnectionManager:
                     and not subscription.revoked
                 ):
                     self._notify(subscription, message)
+
+    def broadcast_event(self, match_id: str, message: dict) -> None:
+        with self._lock:
+            for subscription in tuple(self._subscriptions):
+                if subscription.match_id == str(match_id) and not subscription.revoked:
+                    try:
+                        subscription.loop.call_soon_threadsafe(
+                            subscription.deliver_event, message
+                        )
+                    except RuntimeError:
+                        self.unsubscribe(subscription)
 
     def revoke_session(self, session_id: str) -> None:
         with self._lock:
