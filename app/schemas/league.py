@@ -30,7 +30,7 @@ class LeagueResponse(BaseModel):
     id: str
     name: str
     is_private: bool
-    has_penalty_shootout: bool
+    has_penalty_shootout: bool = False
     started: bool
     creator_id: str
     code_to_join: str

@@ -2,7 +2,7 @@ import ast
 import logging
 from pathlib import Path
 
-from sqlalchemy import Engine, func, select
+from sqlalchemy import Engine, func, inspect, select, text
 from sqlalchemy.orm import Session
 
 # Importar `app.models` registra las tablas en `Base.metadata`. Sin este
@@ -25,6 +25,20 @@ def crear_tablas(engine: Engine) -> None:
 
     migrate_email_verification(engine)
     Base.metadata.create_all(bind=engine)
+    inspector = inspect(engine)
+    room_columns = {column["name"] for column in inspector.get_columns("rooms")}
+    match_columns = {column["name"] for column in inspector.get_columns("matches")}
+    with engine.begin() as connection:
+        if "has_penalty_shootout" not in room_columns:
+            connection.execute(text(
+                "ALTER TABLE rooms ADD COLUMN has_penalty_shootout "
+                "BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
+        if "penalty_winner_club_id" not in match_columns:
+            connection.execute(text(
+                "ALTER TABLE matches ADD COLUMN penalty_winner_club_id "
+                "VARCHAR(36) REFERENCES clubs(id)"
+            ))
 
 
 

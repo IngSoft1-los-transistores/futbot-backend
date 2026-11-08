@@ -2,13 +2,13 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
     SmallInteger,
     String,
-    false,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -115,7 +115,7 @@ class Room(Base):
     match_duration_minutes: Mapped[int] = mapped_column(SmallInteger, nullable=False)
 
     has_penalty_shootout: Mapped[bool] = mapped_column(
-        nullable=False, default=False, server_default=false()
+        Boolean, nullable=False, default=False, server_default=text("FALSE")
     )
 
     status: Mapped[str] = mapped_column(

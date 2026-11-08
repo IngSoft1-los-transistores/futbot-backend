@@ -72,6 +72,7 @@ def test_create_league(
     assert response.status_code == 201
     assert response.json()["name"] == "Test League"
     assert response.json()["is_private"] is False
+    assert response.json()["has_penalty_shootout"] is False
     assert response.json()["creator_id"] == club.id
 
     room = db.scalars(select(Room)).one()
@@ -94,16 +95,20 @@ def test_create_league(
 
 
 def test_create_league_with_penalty_shootout(
-    client, db, club_players, comportamiento_prueba, auth_headers
+    client, db, club, club_players, comportamiento_prueba, auth_headers
 ):
     payload = league_payload(
-        club_players, comportamiento_prueba, has_penalty_shootout=True
+        club_players,
+        comportamiento_prueba,
+        has_penalty_shootout=True,
     )
+
     response = client.post("/api/leagues", headers=auth_headers, json=payload)
 
     assert response.status_code == 201
     assert response.json()["has_penalty_shootout"] is True
-    assert db.scalars(select(Room)).one().has_penalty_shootout is True
+    room = db.scalars(select(Room)).one()
+    assert room.has_penalty_shootout is True
 
 
 def test_league_standings_score_regular_wins_penalties_and_draws(

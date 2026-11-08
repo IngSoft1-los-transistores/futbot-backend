@@ -105,6 +105,10 @@ class Match(Base):
     home_goals: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
     away_goals: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
 
+    penalty_winner_club_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("clubs.id"), nullable=True
+    )
+
     # En segundos, que es la unidad del motor de simulacion. La sala guarda la
     # duracion en minutos
     duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False)

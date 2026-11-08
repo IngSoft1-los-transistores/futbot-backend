@@ -4,12 +4,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, NonNegativeFloat, NonNegativeInt, model_validator
 
-TickPhase = Literal["PLAYING", "HYDRATION", "HALFTIME", "FINISHED"]
+TickPhase = Literal["PLAYING", "HYDRATION", "HALFTIME", "PENALTIES", "FINISHED"]
 PAUSE_PHASES = ("HYDRATION", "HALFTIME")
 PHASE_STATUS = {
     "PLAYING": "in_progress",
     "HYDRATION": "paused",
     "HALFTIME": "paused",
+    "PENALTIES": "paused",
     "FINISHED": "finished",
 }
 
@@ -34,6 +35,15 @@ class Score(StateModel):
     away: int = Field(ge=0, le=32767)
 
 
+class PenaltySnapshot(StateModel):
+    shooter_id: UUID | None = None
+    goalkeeper_id: UUID | None = None
+    score: Score
+    attempts: Score
+    seconds_remaining: float = Field(ge=0)
+    winner_club_id: UUID | None = None
+
+
 class PlayerTick(StateModel):
     player_id: UUID
     position: Position | None = None
@@ -56,6 +66,7 @@ class MatchAction(StateModel):
 class MatchTick(StateModel):
     status: Literal["in_progress", "paused", "finished"]
     phase: TickPhase
+    penalty: PenaltySnapshot | None = None
     pause_duration: NonNegativeInt | None  # total seconds of the current pause
     pause_remaining: NonNegativeFloat | None  # seconds left in the pause at this snapshot
     current_time: float = Field(ge=0)
@@ -94,6 +105,7 @@ class MatchState(StateModel):
     away_club: ClubState
     status: Literal["in_progress", "paused", "finished"]
     phase: TickPhase
+    penalty: PenaltySnapshot | None = None
     pause_duration: NonNegativeInt | None
     pause_remaining: NonNegativeFloat | None
     score: Score

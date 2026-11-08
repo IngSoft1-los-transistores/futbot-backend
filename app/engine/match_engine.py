@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 import random
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -18,19 +19,22 @@ from app.engine.setup import reset_to_kickoff
 from app.engine.state import GoalEvent, MatchPhase, MatchState, PlayerState, Team, Vec2
 
 logger = logging.getLogger(__name__)
+PENALTIES_PER_TEAM = 5
+PENALTY_MAX_SECONDS = 10
 
 
 class MatchEngine:
-    def __init__(self, 
-                 state: MatchState, 
-                 field, 
-                 cfg, 
-                 behavior_ids: dict[str, str], 
-                 schedule: list[Segment] | None = None, 
+    def __init__(self,
+                 state: MatchState,
+                 field,
+                 cfg,
+                 behavior_ids: dict[str, str],
+                 schedule: list[Segment] | None = None,
                  rng: random.Random | None = None,
                  controllable_player_ids: set[str] | None = None,
         on_finish: Callable[[MatchState], Awaitable[None]] | None = None,
-        realtime: bool = True,) -> None:
+        realtime: bool = True,
+        has_penalty_shootout: bool = False,) -> None:
         self.state = state
         self.field = field
         self.cfg = cfg
@@ -43,6 +47,7 @@ class MatchEngine:
         self.controllable_player_ids = set(controllable_player_ids) if controllable_player_ids is not None else None
         self.on_finish = on_finish
         self.realtime = realtime          # False en tests: sin esperas
+        self.has_penalty_shootout = has_penalty_shootout
         self._segment_index = 0
         self._pool = ThreadPoolExecutor(
             max_workers=len(state.players), thread_name_prefix="bot"
@@ -62,6 +67,14 @@ class MatchEngine:
             Team.HOME: {},
             Team.AWAY: {},
         }
+        self.penalty_score = {Team.HOME: 0, Team.AWAY: 0}
+        self.penalty_attempts = {Team.HOME: 0, Team.AWAY: 0}
+        self.penalty_winner: Team | None = None
+        self._penalty_attempt_team: Team | None = None
+        self._penalty_shooter: PlayerState | None = None
+        self._penalty_goalkeeper: PlayerState | None = None
+        self._penalty_full_roster: list[PlayerState] | None = None
+        self._penalty_ticks = 0
 
     async def _collect_actions(self) -> dict[str, Action]:
         ctx = TickContext(self.state, self.field, self.behavior_ids)
@@ -71,7 +84,7 @@ class MatchEngine:
         launched: dict[str, asyncio.Future] = {}
         for p in self.state.players:
             if (
-                self.controllable_player_ids is not None 
+                self.controllable_player_ids is not None
                 and p.id not in self.controllable_player_ids
             ):
                 continue  # este jugador no es controlable por bots
@@ -94,7 +107,7 @@ class MatchEngine:
         actions: dict[str, Action] = {}
         for p in self.state.players:
             if (
-                self.controllable_player_ids is not None 
+                self.controllable_player_ids is not None
                 and p.id not in self.controllable_player_ids
             ):
                 actions[p.id] = NULL_ACTION
@@ -301,9 +314,165 @@ class MatchEngine:
     def _advance_segment(self) -> None:
         nxt = self._segment_index + 1
         if nxt >= len(self.schedule):
-            self.state.phase = MatchPhase.FINISHED
+            if (
+                self.has_penalty_shootout
+                and self.state.score[Team.HOME] == self.state.score[Team.AWAY]
+            ):
+                self._start_penalties()
+            else:
+                self.state.phase = MatchPhase.FINISHED
         else:
             self._enter_segment(nxt)
+
+    def _start_penalties(self) -> None:
+        self.state.phase = MatchPhase.PENALTIES
+        self.state.phase_tick = 0
+        self.penalty_score = {Team.HOME: 0, Team.AWAY: 0}
+        self.penalty_attempts = {Team.HOME: 0, Team.AWAY: 0}
+        self._penalty_full_roster = self.state.players
+        self._emit_ws_event(
+            "PENALTIES_STARTED",
+            ok=True,
+            status="started",
+            maxAttemptsPerTeam=PENALTIES_PER_TEAM,
+            maxSecondsPerAttempt=PENALTY_MAX_SECONDS,
+            tickRate=self.cfg.match_tick_rate,
+        )
+        self._start_penalty_attempt()
+
+    def _start_penalty_attempt(self) -> None:
+        if self._penalty_full_roster is None:
+            raise RuntimeError("No hay plantel disponible para iniciar los penales")
+
+        attempt_number = sum(self.penalty_attempts.values())
+        team = Team.HOME if attempt_number % 2 == 0 else Team.AWAY
+        shooters = [p for p in self._penalty_full_roster if p.team == team]
+        goalkeepers = [p for p in self._penalty_full_roster if p.team != team]
+        if not shooters or not goalkeepers:
+            raise RuntimeError("Cada club necesita jugadores en cancha para los penales")
+
+        shooter = self.rng.choice(shooters)
+        goalkeeper = self.rng.choice(goalkeepers)
+        self._penalty_attempt_team = team
+        self._penalty_shooter = shooter
+        self._penalty_goalkeeper = goalkeeper
+        self._penalty_ticks = 0
+        self.state.players = [shooter, goalkeeper]
+
+        center = self.field.center
+        shooter.pos = center
+        shooter.vel = Vec2()
+        goalkeeper.pos = Vec2(
+            self.field.own_goal_x(goalkeeper.team)
+            + (0.5 if goalkeeper.team == Team.HOME else -0.5),
+            center.y,
+        )
+        goalkeeper.vel = Vec2()
+        self.state.ball.pos = center
+        self.state.ball.vel = Vec2()
+        self.state.ball.owner_id = shooter.id
+        self.state.ball.last_kicker_id = None
+        self.state.ball.cooldown_ticks = 0
+
+    async def _penalty_tick(self) -> None:
+        if self._penalty_attempt_team is None:
+            raise RuntimeError("No hay penal activo")
+
+        players = self.state.players
+        actions = await self._collect_actions()
+
+        for player in players:
+            move_to = actions[player.id].move_to
+            if move_to is not None:
+                move_player(player, move_to, self.dt, self.field)
+            else:
+                player.vel = Vec2()
+        resolve_player_collisions(players, self.field, PLAYER_RADIUS)
+
+        owner = next(
+            (player for player in players if player.id == self.state.ball.owner_id),
+            None,
+        )
+        if owner is not None:
+            self.state.ball.pos = owner.pos
+
+        for player in players:
+            kick = actions[player.id].kick
+            if kick is not None:
+                apply_kick(self.state.ball, player, kick)
+
+        scored_for: Team | None = None
+        if self.state.ball.owner_id is None:
+            previous = self.state.ball.pos
+            step_ball(self.state.ball, self.dt, self.field)
+            scored_for = check_goal(previous, self.state.ball.pos, self.field)
+
+        if scored_for is not None:
+            await self._finish_penalty_attempt(scored_for == self._penalty_attempt_team)
+            return
+
+        resolve_possession(self.state.ball, players, self.rng)
+        self._penalty_ticks += 1
+        max_ticks = max(1, math.floor(PENALTY_MAX_SECONDS / self.dt + 1e-9))
+        if self._penalty_ticks >= max_ticks:
+            await self._finish_penalty_attempt(False)
+
+    async def _finish_penalty_attempt(self, scored: bool) -> None:
+        team = self._penalty_attempt_team
+        shooter = self._penalty_shooter
+        goalkeeper = self._penalty_goalkeeper
+        if team is None or shooter is None or goalkeeper is None:
+            raise RuntimeError("El penal activo no tiene jugadores asignados")
+
+        self.penalty_attempts[team] += 1
+        if scored:
+            self.penalty_score[team] += 1
+        self.state.players = self._penalty_full_roster or self.state.players
+        reset_to_kickoff(self.state, self.field)
+        self._emit_ws_event(
+            "PENALTY_SHOT_RESULT",
+            ok=True,
+            status="scored" if scored else "missed",
+            team=team.value,
+            shooterId=shooter.id,
+            goalkeeperId=goalkeeper.id,
+            attempts={
+                Team.HOME.value: self.penalty_attempts[Team.HOME],
+                Team.AWAY.value: self.penalty_attempts[Team.AWAY],
+            },
+            score={
+                Team.HOME.value: self.penalty_score[Team.HOME],
+                Team.AWAY.value: self.penalty_score[Team.AWAY],
+            },
+        )
+
+        if sum(self.penalty_attempts.values()) == 2 * PENALTIES_PER_TEAM:
+            if self.penalty_score[Team.HOME] == self.penalty_score[Team.AWAY]:
+                self.penalty_winner = self.rng.choice((Team.HOME, Team.AWAY))
+                self._emit_ws_event(
+                    "PENALTIES_TIEBREAK",
+                    ok=True,
+                    status="random",
+                    winner=self.penalty_winner.value,
+                )
+            else:
+                self.penalty_winner = max(
+                    Team,
+                    key=lambda candidate: self.penalty_score[candidate],
+                )
+            self.state.phase = MatchPhase.FINISHED
+            self._emit_ws_event(
+                "PENALTIES_FINISHED",
+                ok=True,
+                status="finished",
+                winner=self.penalty_winner.value,
+                score={
+                    Team.HOME.value: self.penalty_score[Team.HOME],
+                    Team.AWAY.value: self.penalty_score[Team.AWAY],
+                },
+            )
+        else:
+            self._start_penalty_attempt()
 
     def _pause_segment(self) -> Segment | None:
         """Current segment if it is a hydration or halftime pause."""
@@ -346,6 +515,11 @@ class MatchEngine:
     async def tick(self) -> None:
         s = self.state
         if s.phase == MatchPhase.FINISHED:
+            return
+        if s.phase == MatchPhase.PENALTIES:
+            await self._penalty_tick()
+            s.tick_count += 1
+            s.phase_tick += 1
             return
         if s.phase == MatchPhase.PLAY:
             await self._play_step()

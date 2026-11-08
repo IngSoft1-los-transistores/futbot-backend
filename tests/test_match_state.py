@@ -264,6 +264,39 @@ def test_paused_and_finished_states_and_no_reopening(db, published_match):
         publish_match_state(db, scenario.match.id, scenario.tick, expected_revision=3)
 
 
+def test_penalty_winner_is_persisted_with_final_state(db, published_match):
+    scenario = published_match
+    data = scenario.tick.model_dump()
+    data.update(
+        status="finished",
+        phase="FINISHED",
+        pause_duration=None,
+        pause_remaining=None,
+        current_time=300,
+        penalty={
+            "shooter_id": scenario.home_player.id,
+            "goalkeeper_id": scenario.away_player.id,
+            "score": {"home": 0, "away": 0},
+            "attempts": {"home": 5, "away": 5},
+            "seconds_remaining": 0,
+            "winner_club_id": scenario.away.id,
+        },
+    )
+    final = publish_engine_tick(
+        db,
+        scenario.match.id,
+        MatchTick.model_validate(data),
+        expected_revision=1,
+        penalty_winner_club_id=scenario.away.id,
+    )
+
+    db.refresh(scenario.match)
+    assert scenario.match.status == "finished"
+    assert scenario.match.penalty_winner_club_id == scenario.away.id
+    assert final.phase == "FINISHED"
+    assert str(final.penalty.winner_club_id) == scenario.away.id
+
+
 def test_finishing_league_match_notifies_standings_subscribers(
     db, match_scenario, state_engine, monkeypatch
 ):
@@ -293,10 +326,14 @@ def test_finishing_league_match_notifies_standings_subscribers(
     monkeypatch.setattr(leagues_hub, "notify_standings_updated", notify)
     publish_engine_state(db, scenario.match.id, state_engine, expected_revision=0)
     final_tick = scenario.tick.model_copy(
-        update={"status": "finished", "current_time": scenario.match.duration_seconds}
+        update={
+            "status": "finished",
+            "phase": "FINISHED",
+            "current_time": scenario.match.duration_seconds,
+        }
     )
     publish_engine_tick(db, scenario.match.id, final_tick, expected_revision=1)
-
+    notify.assert_called_once_with(league.id, scenario.match.id)
     notify.assert_called_once_with(league.id, scenario.match.id)
 
 
