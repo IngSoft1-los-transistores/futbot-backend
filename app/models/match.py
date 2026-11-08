@@ -93,6 +93,10 @@ class Match(Base):
         String(36), ForeignKey("clubs.id"), nullable=False
     )
 
+    penalty_winner_club_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("clubs.id"), nullable=True
+    )
+
     status: Mapped[str] = mapped_column(
         String(15), nullable=False, default=ESTADO_SCHEDULED
     )

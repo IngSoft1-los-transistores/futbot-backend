@@ -122,6 +122,8 @@ def prepare_match_state(db: Session, match_id: str, tick: MatchTick, *, expected
         away_club=ClubState(club_id=away.id, name=away.name),
         status=tick.status, score=tick.score,
         phase=tick.phase, penalty=tick.penalty,
+        pause_duration=tick.pause_duration,
+        pause_remaining=tick.pause_remaining,
         result=f"{tick.score.home}-{tick.score.away}",
         current_time=tick.current_time,
         remaining_time=max(0, match.duration_seconds - tick.current_time),

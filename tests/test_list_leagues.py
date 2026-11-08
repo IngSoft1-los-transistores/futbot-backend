@@ -37,14 +37,21 @@ def crear_club(db: Session, nombre: str) -> Club:
 
 
 def crear_liga(
-    db: Session, creador: Club, nombre: str, *,
-    privada: bool = False, status: str = ROOM_STATUS_WAITING_GUEST, inscriptos: tuple[Club, ...] = (),
+    db: Session,
+    creador: Club,
+    nombre: str,
+    *,
+    privada: bool = False,
+    status: str = ROOM_STATUS_WAITING_GUEST,
+    inscriptos: tuple[Club, ...] = (),
+    has_penalty_shootout: bool = False,
 ) -> Room:
     liga = Room(
         type=ROOM_TYPE_PRIVATE if privada else ROOM_TYPE_PUBLIC,
         name=nombre, min_clubs=3, max_clubs=30, match_duration_minutes=10,
         status=status, creator_club_id=creador.id,
         password_hash=PASSWORD_HASH if privada else None,   # el CHECK exige contraseña solo en privadas
+        has_penalty_shootout=has_penalty_shootout,
     )
     db.add(liga)
     db.flush()
@@ -93,14 +100,14 @@ def test_sin_ligas_devuelve_lista_vacia(client: TestClient, autenticado) -> None
 def test_cada_liga_trae_los_campos_del_contrato(
     client: TestClient, db: Session, autenticado, creador: Club
 ) -> None:
-    liga = crear_liga(db, creador, "Liga Norte")
+    liga = crear_liga(db, creador, "Liga Norte", has_penalty_shootout=True)
 
     r = client.get(URL)
 
     assert r.status_code == 200
     assert r.json() == [{
         "id": liga.id, "name": "Liga Norte", "participantsCount": 0,
-        "started": False, "isPrivate": False,
+        "started": False, "isPrivate": False, "hasPenaltyShootout": True,
     }]
 
 
@@ -161,29 +168,16 @@ def test_las_ligas_se_ordenan_por_nombre_sin_distinguir_mayusculas(
     assert nombres(client.get(URL)) == ["Alfa", "beta", "Charlie", "delta"]
 
 
-# --- Ligas privadas ---
-
-
-def test_lista_ligas_publicas_y_privadas_con_is_private(
+def test_no_lista_las_ligas_privadas(
     client: TestClient, db: Session, autenticado, creador: Club
 ) -> None:
     crear_liga(db, creador, "Liga Publica")
     crear_liga(db, creador, "Liga Privada", privada=True)
 
-    por_nombre = {liga["name"]: liga["isPrivate"] for liga in client.get(URL).json()}
-
-    assert por_nombre == {"Liga Publica": False, "Liga Privada": True}
-
-
-def test_las_ligas_privadas_no_exponen_codigo_ni_contrasena(
-    client: TestClient, db: Session, autenticado, creador: Club
-) -> None:
-    crear_liga(db, creador, "Liga Privada", privada=True)
-
     r = client.get(URL)
 
-    assert set(r.json()[0]) == {"id", "name", "participantsCount", "started", "isPrivate"}
-    assert PASSWORD_HASH not in r.text
+    assert nombres(r) == ["Liga Publica"]
+    assert r.json()[0]["isPrivate"] is False
 
 
 # --- Filtro por nombre ---
@@ -259,18 +253,6 @@ def test_los_caracteres_especiales_del_filtro_se_tratan_como_texto(
     assert nombres(client.get(URL, params={"name": "_"})) == ["Liga A_B"]
 
 
-def test_el_filtro_tambien_aplica_a_ligas_privadas(
-    client: TestClient, db: Session, autenticado, creador: Club
-) -> None:
-    crear_liga(db, creador, "Liga Secreta", privada=True)
-    crear_liga(db, creador, "Liga Abierta")
-
-    r = client.get(URL, params={"name": "SECRETA"})
-
-    assert nombres(r) == ["Liga Secreta"]
-    assert r.json()[0]["isPrivate"] is True
-
-
 def test_el_filtro_no_devuelve_ligas_canceladas(
     client: TestClient, db: Session, autenticado, creador: Club
 ) -> None:
@@ -287,3 +269,14 @@ def test_filtro_demasiado_largo_devuelve_422(client: TestClient, autenticado) ->
     r = client.get(URL, params={"name": "x" * 81})
 
     assert r.status_code == 422
+
+
+def test_el_filtro_no_revela_ligas_privadas(
+    client: TestClient, db: Session, autenticado, creador: Club
+) -> None:
+    crear_liga(db, creador, "Liga Secreta", privada=True)
+
+    r = client.get(URL, params={"name": "secreta"})
+
+    assert r.status_code == 200
+    assert r.json() == []

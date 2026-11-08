@@ -24,7 +24,14 @@ PENALTY_MAX_SECONDS = 10
 
 
 class MatchEngine:
-    def __init__(self, state: MatchState, field, cfg, behavior_ids: dict[str, str], schedule: list[Segment] | None = None, rng: random.Random | None = None,
+    def __init__(self,
+                 state: MatchState,
+                 field,
+                 cfg,
+                 behavior_ids: dict[str, str],
+                 schedule: list[Segment] | None = None,
+                 rng: random.Random | None = None,
+                 controllable_player_ids: set[str] | None = None,
         on_finish: Callable[[MatchState], Awaitable[None]] | None = None,
         realtime: bool = True,
         has_penalty_shootout: bool = False,) -> None:
@@ -37,6 +44,7 @@ class MatchEngine:
             cfg.friendly_match_duration_seconds, cfg.match_tick_rate
         )
         self.rng = rng or random.Random()
+        self.controllable_player_ids = set(controllable_player_ids) if controllable_player_ids is not None else None
         self.on_finish = on_finish
         self.realtime = realtime          # False en tests: sin esperas
         self.has_penalty_shootout = has_penalty_shootout
@@ -75,6 +83,11 @@ class MatchEngine:
         # 1. Lanzar los bots que no estén ocupados del tick anterior
         launched: dict[str, asyncio.Future] = {}
         for p in self.state.players:
+            if (
+                self.controllable_player_ids is not None
+                and p.id not in self.controllable_player_ids
+            ):
+                continue  # este jugador no es controlable por bots
             if p.id in self._busy:
                 continue                      # sigue colgado: acción nula
             fut = loop.run_in_executor(
@@ -93,6 +106,12 @@ class MatchEngine:
         # 3. Leer solo lo que terminó a tiempo
         actions: dict[str, Action] = {}
         for p in self.state.players:
+            if (
+                self.controllable_player_ids is not None
+                and p.id not in self.controllable_player_ids
+            ):
+                actions[p.id] = NULL_ACTION
+                continue  # este jugador no es controlable por bots
             fut = launched.get(p.id)
             if fut is not None and fut.done() and not fut.cancelled() \
                     and fut.exception() is None:
@@ -454,6 +473,26 @@ class MatchEngine:
             )
         else:
             self._start_penalty_attempt()
+
+    def _pause_segment(self) -> Segment | None:
+        """Current segment if it is a hydration or halftime pause."""
+        if self.state.phase not in (MatchPhase.HYDRATION, MatchPhase.HALFTIME):
+            return None
+        return self.schedule[self._segment_index]
+
+    @property
+    def pause_seconds(self) -> int | None:
+        """Total length of the current pause, or None outside a pause."""
+        segment = self._pause_segment()
+        return None if segment is None else round(segment.ticks / self.cfg.match_tick_rate)
+
+    @property
+    def pause_remaining_seconds(self) -> float | None:
+        """Seconds left in the current pause as of this tick, or None outside a pause."""
+        segment = self._pause_segment()
+        if segment is None:
+            return None
+        return (segment.ticks - self.state.phase_tick) / self.cfg.match_tick_rate
 
     def _apply_substitutions(self) -> None:
         for team in (Team.HOME, Team.AWAY):

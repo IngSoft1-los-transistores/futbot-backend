@@ -115,7 +115,7 @@ def test_final_penalty_events_are_delivered_before_socket_closes(
         final_data = make_tick(demo, 0).model_dump()
         final_data.update(
             status="finished",
-            phase="finished",
+            phase="FINISHED",
             current_time=demo.duration,
             penalty={
                 "shooter_id": demo.player_ids[0][0],
@@ -287,7 +287,7 @@ def test_penalty_snapshot_includes_active_shot_data(db, demo):
         tick = match_runner.capture_tick(engine, roster, club_of)
 
         assert tick.status == "paused"
-        assert tick.phase == "penalties"
+        assert tick.phase == "PENALTIES"
         assert str(tick.penalty.shooter_id) == engine._penalty_shooter.id
         assert str(tick.penalty.goalkeeper_id) == engine._penalty_goalkeeper.id
         assert tick.penalty.score.model_dump() == {"home": 0, "away": 0}

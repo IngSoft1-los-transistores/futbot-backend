@@ -11,13 +11,15 @@ from app.db.init_db import (
 from app.models.behavior import Behavior
 from app.models.club import Club
 from app.models.player import Player
-from tests.conftest import crear_player
 
 """Tests del schema: tablas, restricciones de integridad y carga inicial."""
 
 TABLAS_ESPERADAS = {
     "users",
+    "password_reset_tokens",
     "auth_sessions",
+    "email_verification_tokens",
+    "verification_rate_limits",
     "clubs",
     "players",
     "behaviors",

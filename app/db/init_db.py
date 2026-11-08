@@ -4,6 +4,7 @@ from pathlib import Path
 
 from sqlalchemy import Engine, func, inspect, select, text
 from sqlalchemy.orm import Session
+
 # Importar `app.models` registra las tablas en `Base.metadata`. Sin este
 # import, `create_all()` no tendria nada que crear.
 from app.models.behavior import Behavior
@@ -19,10 +20,10 @@ logger = logging.getLogger(__name__)
 DIRECTORIO_DEFAULTS = Path(__file__).resolve().parent.parent / "behaviors" / "defaults"
 
 def crear_tablas(engine: Engine) -> None:
-    """Crea las tablas que todavia no existen.
-    `create_all()` **no es una migracion**: crea lo que falta y no toca lo que
-    ya esta.
-    """
+    """Aplica la migración de correo y crea las tablas que todavía no existen."""
+    from app.db.migrations import migrate_email_verification
+
+    migrate_email_verification(engine)
     Base.metadata.create_all(bind=engine)
     inspector = inspect(engine)
     room_columns = {column["name"] for column in inspector.get_columns("rooms")}
@@ -38,6 +39,7 @@ def crear_tablas(engine: Engine) -> None:
                 "ALTER TABLE matches ADD COLUMN penalty_winner_club_id "
                 "VARCHAR(36) REFERENCES clubs(id)"
             ))
+
 
 
 def _leer_comportamiento(archivo: Path) -> tuple[str, str]:
