@@ -58,6 +58,11 @@ class Match(Base):
         CheckConstraint(
             "home_club_id <> away_club_id", name="ck_matches_clubes_distintos"
         ),
+        CheckConstraint(
+            "penalty_winner_club_id IS NULL OR "
+            "penalty_winner_club_id IN (home_club_id, away_club_id)",
+            name="ck_matches_penalty_winner_participant",
+        ),
         # En una liga, dos clubes se enfrentan una sola vez.
         UniqueConstraint(
             "room_id",
@@ -86,6 +91,10 @@ class Match(Base):
     )
     away_club_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("clubs.id"), nullable=False
+    )
+
+    penalty_winner_club_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("clubs.id"), nullable=True
     )
 
     status: Mapped[str] = mapped_column(

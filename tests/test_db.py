@@ -3,11 +3,13 @@ from sqlalchemy import Engine, func, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.init_db import _leer_comportamiento, cargar_comportamientos_por_defecto
+from app.db.init_db import (
+    _leer_comportamiento,
+    cargar_comportamientos_por_defecto,
+)
 from app.models.behavior import Behavior
 from app.models.club import Club
 from app.models.player import Player
-from tests.conftest import crear_player
 
 """Tests del schema: tablas, restricciones de integridad y carga inicial."""
 

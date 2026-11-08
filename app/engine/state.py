@@ -11,9 +11,10 @@ from app.models.goal import Goal
 from app.models.match import ESTADO_PRE_MATCH, ESTADO_IN_PROGRESS, ESTADO_PAUSED, Match
 from app.models.match_player import MatchPlayer
 from app.models.player import Player
-from app.models.room import Room
+from app.models.room import ROOM_TYPE_PRIVATE, ROOM_TYPE_PUBLIC, Room
 from app.schemas.match_state import MatchState, MatchTick
 from app.services.match_state import prepare_match_state, publish_prepared_state
+from app.ws.leagues_hub import leagues_hub
 from dataclasses import dataclass, field
 from enum import Enum
 import math
@@ -51,6 +52,7 @@ def publish_engine_tick(db: Session, match_id: str, tick: MatchTick, *, expected
     with match_states.lock(match_id):
         state = prepare_match_state(db, match_id, tick, expected_revision=expected_revision)
         match = db.get(Match, match_id)
+        standings_league_id = None
         goals = [action for action in state.actions if action.type == 'goal']
         counts = Counter(str(goal.club_id) for goal in goals)
         expected = Counter({
@@ -78,6 +80,8 @@ def publish_engine_tick(db: Session, match_id: str, tick: MatchTick, *, expected
                     room = db.get(Room, match.room_id)
                     if room.type == 'friendly':
                         room.status, room.finished_at = 'finished', match.finished_at
+                    elif room.type in (ROOM_TYPE_PUBLIC, ROOM_TYPE_PRIVATE):
+                        standings_league_id = room.id
                     roster_ids = select(MatchPlayer.player_id).where(
                         MatchPlayer.match_id == match_id
                     )
@@ -101,6 +105,8 @@ def publish_engine_tick(db: Session, match_id: str, tick: MatchTick, *, expected
                 db.rollback()
                 raise
         publish_prepared_state(state)
+        if standings_league_id is not None:
+            leagues_hub.notify_standings_updated(standings_league_id, match_id)
         return state
 
 @dataclass(frozen=True, slots=True) #vector 2D

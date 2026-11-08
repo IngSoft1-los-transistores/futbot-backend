@@ -37,14 +37,21 @@ def crear_club(db: Session, nombre: str) -> Club:
 
 
 def crear_liga(
-    db: Session, creador: Club, nombre: str, *,
-    privada: bool = False, status: str = ROOM_STATUS_WAITING_GUEST, inscriptos: tuple[Club, ...] = (),
+    db: Session,
+    creador: Club,
+    nombre: str,
+    *,
+    privada: bool = False,
+    status: str = ROOM_STATUS_WAITING_GUEST,
+    inscriptos: tuple[Club, ...] = (),
+    has_penalty_shootout: bool = False,
 ) -> Room:
     liga = Room(
         type=ROOM_TYPE_PRIVATE if privada else ROOM_TYPE_PUBLIC,
         name=nombre, min_clubs=3, max_clubs=30, match_duration_minutes=10,
         status=status, creator_club_id=creador.id,
         password_hash=PASSWORD_HASH if privada else None,   # el CHECK exige contraseña solo en privadas
+        has_penalty_shootout=has_penalty_shootout,
     )
     db.add(liga)
     db.flush()
@@ -93,14 +100,14 @@ def test_sin_ligas_devuelve_lista_vacia(client: TestClient, autenticado) -> None
 def test_cada_liga_trae_los_campos_del_contrato(
     client: TestClient, db: Session, autenticado, creador: Club
 ) -> None:
-    liga = crear_liga(db, creador, "Liga Norte")
+    liga = crear_liga(db, creador, "Liga Norte", has_penalty_shootout=True)
 
     r = client.get(URL)
 
     assert r.status_code == 200
     assert r.json() == [{
         "id": liga.id, "name": "Liga Norte", "participantsCount": 0,
-        "started": False, "isPrivate": False,
+        "started": False, "isPrivate": False, "hasPenaltyShootout": True,
     }]
 
 

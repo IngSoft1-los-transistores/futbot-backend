@@ -4,6 +4,7 @@ from pathlib import Path
 
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
+
 # Importar `app.models` registra las tablas en `Base.metadata`. Sin este
 # import, `create_all()` no tendria nada que crear.
 from app.models.behavior import Behavior
@@ -24,6 +25,7 @@ def crear_tablas(engine: Engine) -> None:
 
     migrate_email_verification(engine)
     Base.metadata.create_all(bind=engine)
+
 
 
 def _leer_comportamiento(archivo: Path) -> tuple[str, str]:
