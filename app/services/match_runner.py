@@ -23,6 +23,8 @@ _running: dict[str, asyncio.Task] = {}
 _engines: dict[str, MatchEngine] = {}
 _match_club_teams: dict[str, dict[str, Team]] = {}
 
+def get_live_engine(match_id: str) -> MatchEngine | None:
+    return _engines.get(match_id)
 
 def build_engine_from_db(
     db: Session, match_id: str, cfg,
