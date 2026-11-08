@@ -75,7 +75,7 @@ async def test_valid_change_is_queued_and_confirmed(db, club, match_engine, sock
     behavior = make_behavior(db, club.id)
     payload = {"playerId": "h0", "behaviorId": behavior.id}
 
-    await handle_change_behavior(socket, db.get_bind(), match_engine, club.id, payload)
+    await handle_change_behavior(socket, db.get_bind(), match_engine, club.id, payload, "match-1")
 
     assert socket.sent == [
         {"event": "BEHAVIOR_CHANGED", "payload": {"playerId": "h0", "behaviorId": behavior.id}}
@@ -90,7 +90,7 @@ async def test_preprogrammed_behavior_is_accepted(
 ):
     payload = {"playerId": "h0", "behaviorId": comportamiento_prueba.id}
 
-    await handle_change_behavior(socket, db.get_bind(), match_engine, club.id, payload)
+    await handle_change_behavior(socket, db.get_bind(), match_engine, club.id, payload, "match-1")
 
     assert socket.sent[0]["event"] == "BEHAVIOR_CHANGED"
 
@@ -100,7 +100,7 @@ async def test_behavior_of_other_club_is_rejected(db, club, other_club, match_en
     behavior = make_behavior(db, other_club.id)
     payload = {"playerId": "h0", "behaviorId": behavior.id}
 
-    await handle_change_behavior(socket, db.get_bind(), match_engine, club.id, payload)
+    await handle_change_behavior(socket, db.get_bind(), match_engine, club.id, payload, "match-1")
 
     assert socket.sent[0]["type"] == "error"
     assert socket.sent[0]["error_code"] == "BEHAVIOR_CHANGE_BEHAVIOR_UNAVAILABLE"
@@ -112,7 +112,7 @@ async def test_deleted_behavior_is_rejected(db, club, match_engine, socket):
     behavior = make_behavior(db, club.id, deleted=True)
     payload = {"playerId": "h0", "behaviorId": behavior.id}
 
-    await handle_change_behavior(socket, db.get_bind(), match_engine, club.id, payload)
+    await handle_change_behavior(socket, db.get_bind(), match_engine, club.id, payload, "match-1")
 
     assert socket.sent[0]["error_code"] == "BEHAVIOR_CHANGE_BEHAVIOR_UNAVAILABLE"
     assert match_engine._pending_behavior_changes == []
@@ -123,7 +123,7 @@ async def test_player_of_other_team_is_rejected(db, club, match_engine, socket):
     behavior = make_behavior(db, club.id)
     payload = {"playerId": "a0", "behaviorId": behavior.id}
 
-    await handle_change_behavior(socket, db.get_bind(), match_engine, club.id, payload)
+    await handle_change_behavior(socket, db.get_bind(), match_engine, club.id, payload, "match-1")
 
     assert socket.sent[0]["error_code"] == "BEHAVIOR_CHANGE_INVALID_PLAYER"
     assert match_engine._pending_behavior_changes == []
@@ -133,7 +133,7 @@ async def test_player_of_other_team_is_rejected(db, club, match_engine, socket):
 async def test_club_that_does_not_play_is_rejected(db, match_engine, socket, comportamiento_prueba):
     payload = {"playerId": "h0", "behaviorId": comportamiento_prueba.id}
 
-    await handle_change_behavior(socket, db.get_bind(), match_engine, "club-ajeno", payload)
+    await handle_change_behavior(socket, db.get_bind(), match_engine, "club-ajeno", payload, "match-1")
 
     assert socket.sent[0]["type"] == "error"
     assert socket.sent[0]["error_code"] == "BEHAVIOR_CHANGE_INVALID_PLAYER"
@@ -145,7 +145,7 @@ async def test_match_not_running_is_rejected(db, club, socket):
     behavior = make_behavior(db, club.id)
     payload = {"playerId": "h0", "behaviorId": behavior.id}
 
-    await handle_change_behavior(socket, db.get_bind(), None, club.id, payload)
+    await handle_change_behavior(socket, db.get_bind(), None, club.id, payload, "match-1")
 
     ["error_code"] == "BEHAVIOR_CHANGE_MATCH_NOT_RUNNING"
 
@@ -163,7 +163,7 @@ async def test_match_not_running_is_rejected(db, club, socket):
     ],
 )
 async def test_invalid_payload_is_rejected(db, club, match_engine, socket, payload):
-    await handle_change_behavior(socket, db.get_bind(), match_engine, club.id, payload)
+    await handle_change_behavior(socket, db.get_bind(), match_engine, club.id, payload, "match-1")
 
     assert socket.sent[0]["error_code"] == "BEHAVIOR_CHANGE_INVALID_REQUEST"
     assert match_engine._pending_behavior_changes == []
@@ -173,7 +173,7 @@ async def test_invalid_payload_is_rejected(db, club, match_engine, socket, paylo
 async def test_rejection_does_not_close_the_socket(db, club, match_engine, socket):
     payload = {"playerId": "a0", "behaviorId": "no-existe"}
 
-    await handle_change_behavior(socket, db.get_bind(), match_engine, club.id, payload)
+    await handle_change_behavior(socket, db.get_bind(), match_engine, club.id, payload, "match-1")
 
     assert socket.sent[0]["type"] == "error"
     assert socket.closed is False

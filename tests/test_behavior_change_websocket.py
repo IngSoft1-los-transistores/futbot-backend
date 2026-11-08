@@ -4,6 +4,7 @@ from sqlalchemy import select
 from app.core.config import get_settings
 from app.engine.state import Team
 from app.models.behavior import Behavior
+from app.models.match_player import MatchPlayer
 from app.models.user import User
 from app.services import match_runner
 from app.services.auth import start_session
@@ -155,3 +156,20 @@ def test_match_without_engine_is_rejected(client, db, demo, own_behavior, monkey
         error = socket.receive_json()
         assert error["type"] == "error"
         assert error["error_code"] == "BEHAVIOR_CHANGE_MATCH_NOT_RUNNING"
+
+def test_change_is_saved_as_current_behavior(client, db, demo, live_engine, own_behavior):
+    player_id = demo.player_ids[0][0]
+    socket = open_ready(client, db, demo)
+    try:
+        socket.send_json(change_message(player_id, own_behavior.id))
+        assert socket.receive_json()['event'] == 'BEHAVIOR_CHANGED'
+    finally:
+        socket.__exit__(None, None, None)
+
+    db.expire_all()
+    saved = db.scalar(
+        select(MatchPlayer.behavior_id).where(
+            MatchPlayer.match_id == demo.match_id, MatchPlayer.player_id == player_id
+        )
+    )
+    assert saved == own_behavior.id

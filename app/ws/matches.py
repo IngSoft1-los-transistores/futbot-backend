@@ -170,7 +170,7 @@ async def match_stream(socket: WebSocket, match_id: str, db: Session = Depends(g
                             })
                     elif isinstance(command, dict) and command.get('action') == 'CHANGE_BEHAVIOR':
                         await handle_change_behavior(
-                            socket, bind, get_live_engine(match_id), club_id, command.get('payload')
+                            socket, bind, get_live_engine(match_id), club_id, command.get('payload'), match_id
                         )
                     else:
                         await socket.send_json({
