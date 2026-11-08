@@ -436,3 +436,27 @@ def test_un_codigo_enviado_de_mas_se_ignora(
     r = client.post(url(sala.id), json=body)
 
     assert r.status_code == 200
+
+def test_club_no_puede_unirse_a_su_propia_sala(
+    client: TestClient,
+    db: Session,
+    como,
+    sala: Room,
+    anfitrion: Club,
+    comportamiento: Behavior,
+) -> None:
+    jugadores_anfitrion = crear_jugadores(db, anfitrion.id, 6)
+    como(anfitrion.id)
+
+    r = client.post(
+        url(sala.id),
+        json=armar_body(jugadores_anfitrion, comportamiento),
+    )
+    assert r.status_code == 409
+
+    assert db.query(Enrollment).filter_by(
+        room_id=sala.id
+    ).count() == 1
+
+    db.expire_all()
+    assert db.get(Room, sala.id).status == ROOM_STATUS_WAITING_GUEST
