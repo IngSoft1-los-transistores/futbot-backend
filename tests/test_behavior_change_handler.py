@@ -103,7 +103,7 @@ async def test_behavior_of_other_club_is_rejected(db, club, other_club, match_en
     await handle_change_behavior(socket, db.get_bind(), match_engine, club.id, payload)
 
     assert socket.sent[0]["type"] == "error"
-    assert socket.sent[0]["status"] == 404
+    assert socket.sent[0]["error_code"] == "BEHAVIOR_CHANGE_BEHAVIOR_UNAVAILABLE"
     assert match_engine._pending_behavior_changes == []
 
 
@@ -114,7 +114,7 @@ async def test_deleted_behavior_is_rejected(db, club, match_engine, socket):
 
     await handle_change_behavior(socket, db.get_bind(), match_engine, club.id, payload)
 
-    assert socket.sent[0]["status"] == 404
+    assert socket.sent[0]["error_code"] == "BEHAVIOR_CHANGE_BEHAVIOR_UNAVAILABLE"
     assert match_engine._pending_behavior_changes == []
 
 
@@ -125,18 +125,18 @@ async def test_player_of_other_team_is_rejected(db, club, match_engine, socket):
 
     await handle_change_behavior(socket, db.get_bind(), match_engine, club.id, payload)
 
-    assert socket.sent[0]["status"] == 400
+    assert socket.sent[0]["error_code"] == "BEHAVIOR_CHANGE_INVALID_PLAYER"
     assert match_engine._pending_behavior_changes == []
 
 
 @pytest.mark.asyncio
-async def test_club_that_does_not_play_is_rejected(db, club, match_engine, socket):
-    behavior = make_behavior(db, club.id)
-    payload = {"playerId": "h0", "behaviorId": behavior.id}
+async def test_club_that_does_not_play_is_rejected(db, match_engine, socket, comportamiento_prueba):
+    payload = {"playerId": "h0", "behaviorId": comportamiento_prueba.id}
 
     await handle_change_behavior(socket, db.get_bind(), match_engine, "club-ajeno", payload)
 
     assert socket.sent[0]["type"] == "error"
+    assert socket.sent[0]["error_code"] == "BEHAVIOR_CHANGE_INVALID_PLAYER"
     assert match_engine._pending_behavior_changes == []
 
 
@@ -147,7 +147,7 @@ async def test_match_not_running_is_rejected(db, club, socket):
 
     await handle_change_behavior(socket, db.get_bind(), None, club.id, payload)
 
-    assert socket.sent[0]["status"] == 409
+    ["error_code"] == "BEHAVIOR_CHANGE_MATCH_NOT_RUNNING"
 
 
 @pytest.mark.asyncio
@@ -165,7 +165,7 @@ async def test_match_not_running_is_rejected(db, club, socket):
 async def test_invalid_payload_is_rejected(db, club, match_engine, socket, payload):
     await handle_change_behavior(socket, db.get_bind(), match_engine, club.id, payload)
 
-    assert socket.sent[0]["status"] == 422
+    assert socket.sent[0]["error_code"] == "BEHAVIOR_CHANGE_INVALID_REQUEST"
     assert match_engine._pending_behavior_changes == []
 
 

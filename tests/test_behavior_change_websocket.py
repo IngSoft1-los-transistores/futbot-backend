@@ -109,7 +109,7 @@ def test_unknown_behavior_is_rejected_and_socket_stays_open(
         socket.send_json(change_message(player_id, "no-existe"))
         error = socket.receive_json()
         assert error["type"] == "error"
-        assert error["status"] == 404
+        assert error["error_code"] == "BEHAVIOR_CHANGE_BEHAVIOR_UNAVAILABLE"
         assert live_engine._pending_behavior_changes == []
 
         # El socket sigue abierto: un pedido válido después funciona.
@@ -126,7 +126,7 @@ def test_bench_player_is_rejected(client, db, demo, live_engine, own_behavior):
         socket.send_json(change_message(bench_player_id, own_behavior.id))
         error = socket.receive_json()
         assert error["type"] == "error"
-        assert error["status"] == 400
+        assert error["error_code"] == "BEHAVIOR_CHANGE_INVALID_PLAYER"
         assert live_engine._pending_behavior_changes == []
     finally:
         socket.__exit__(None, None, None)
@@ -139,7 +139,7 @@ def test_invalid_payload_is_rejected_and_socket_stays_open(
     try:
         socket.send_json({"action": "CHANGE_BEHAVIOR", "payload": {"playerId": 1}})
         error = socket.receive_json()
-        assert error["status"] == 422
+        assert error["error_code"] == "BEHAVIOR_CHANGE_INVALID_REQUEST"
 
         socket.send_json(change_message(demo.player_ids[0][0], own_behavior.id))
         assert socket.receive_json()["event"] == "BEHAVIOR_CHANGED"
@@ -154,4 +154,4 @@ def test_match_without_engine_is_rejected(client, db, demo, own_behavior, monkey
         socket.send_json(change_message(demo.player_ids[0][0], own_behavior.id))
         error = socket.receive_json()
         assert error["type"] == "error"
-        assert error["status"] == 409
+        assert error["error_code"] == "BEHAVIOR_CHANGE_MATCH_NOT_RUNNING"
