@@ -14,6 +14,8 @@ from app.engine.state import MatchPhase, PlayerState, Team, Vec2, publish_engine
 from app.models.match import ESTADO_IN_PROGRESS, ESTADO_PRE_MATCH, Match
 from app.models.match_player import MatchPlayer
 from app.models.player import Player
+from app.behaviors.loader import compile_and_cache_behavior
+from app.models.behavior import Behavior
 from app.schemas.match_state import PHASE_STATUS, MatchTick
 from app.ws.manager import manager
 
@@ -56,6 +58,31 @@ def build_engine_from_db(
             substitutes[team].append(spec)
         behaviors[pl.id] = mp.behavior_id
 
+    behavior_ids = set(behaviors.values())
+    if behavior_ids:
+        # Buscamos los comportamientos en la base de datos
+        behavior_rows = db.scalars(
+            select(Behavior).where(
+                Behavior.id.in_(behavior_ids),
+                Behavior.deleted_at.is_(None)
+            )
+        ).all()
+
+        # Validamos que no falte ninguno
+        found_ids = {b.id for b in behavior_rows}
+        missing_ids = behavior_ids - found_ids
+
+        if missing_ids:
+            raise LookupError(f"Comportamientos no encontrados en la DB: {missing_ids}")
+
+        # Los compilamos y forzamos a guardarlos en caché
+        for behavior in behavior_rows:
+            compile_and_cache_behavior(
+                behavior_id=behavior.id,
+                code=behavior.code,
+                overwrite=True  # Pisa la versión vieja si el usuario lo editó
+            )
+    
     field = FieldConfig()
     state = create_initial_state(field, home, away)      # valida 3 por equipo
     schedule = build_schedule(
