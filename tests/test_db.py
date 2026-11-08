@@ -13,7 +13,10 @@ from tests.conftest import crear_player
 
 TABLAS_ESPERADAS = {
     "users",
+    "password_reset_tokens",
     "auth_sessions",
+    "email_verification_tokens",
+    "verification_rate_limits",
     "clubs",
     "players",
     "behaviors",
