@@ -63,6 +63,7 @@ def client(db: Session) -> Generator[TestClient, None, None]:
 @pytest.fixture
 def user(db: Session) -> User:
     usuario = User(
+        email_verified_at=datetime.now(timezone.utc),
         username="tester",
         email="tester@futbot.test",
         password_hash="hash-de-prueba",
@@ -115,7 +116,11 @@ def comportamiento_prueba(db: Session) -> Behavior:
     """
     behavior = Behavior(
         name="Ataque Directo",
-        code="ATAQUE_DIRECTO",
+        code="""
+def behavior(player):
+    pelota = player.encontrar_pelota()
+    player.correr(pelota)
+""",
         is_preprogrammed=True,
     )
     db.add(behavior)
@@ -126,6 +131,7 @@ def comportamiento_prueba(db: Session) -> Behavior:
 @pytest.fixture
 def login_user(db: Session) -> User:
     user = User(
+        email_verified_at=datetime.now(timezone.utc),
         username="login-tester",
         email="login@futbot.test",
         password_hash=password_context.hash("correct-password"),
@@ -195,3 +201,59 @@ def other_club(db: Session) -> Club:
     db.add(other_user)
     db.commit()
     return other_user.club
+
+@pytest.fixture
+def other_club_players(crear_player, other_club) -> list[Player]:
+    """Crea 6 jugadores del otro club usando la fábrica crear_player."""
+    return [crear_player(other_club.id, name=f"Other Player {i + 1}") for i in range(6)]
+
+@pytest.fixture
+def add_default_behaviors(db: Session):
+    """Agrega comportamientos preprogramados por defecto a la base de datos de prueba."""
+    behaviors = [
+        Behavior(
+            name="defense",
+            code="""
+                def behavior(player):
+                    # Comportamiento de defensa genérico
+                    player.correr((0, 0))  # Ir a una posición defensiva
+            """,
+            is_preprogrammed=True,
+        ),
+        Behavior(
+            name="goalkeeper",
+            code="""
+                def behavior(player):
+                    # Comportamiento de portero genérico
+                    player.quedarse_en_porteria()  # Mantenerse en la portería
+            """,
+            is_preprogrammed=True,
+        ),
+    ]
+    db.add_all(behaviors)
+    db.commit()
+
+@pytest.fixture(autouse=True)
+def email_sender():
+    from app.services.email_sender import get_email_sender
+
+    class FakeEmailSender:
+        def __init__(self):
+            self.messages = []
+            self.password_reset_messages = []
+            self.fail = False
+
+        def send_verification(self, email, url):
+            if self.fail:
+                raise RuntimeError("SMTP unavailable")
+            self.messages.append((email, url))
+
+        def send_password_reset(self, email, url):
+            if self.fail:
+                raise RuntimeError("SMTP unavailable")
+            self.password_reset_messages.append((email, url))
+
+    sender = FakeEmailSender()
+    app.dependency_overrides[get_email_sender] = lambda: sender
+    yield sender
+    app.dependency_overrides.pop(get_email_sender, None)

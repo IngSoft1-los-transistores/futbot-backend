@@ -68,3 +68,35 @@ class PasswordNotAllowedOnPublicLeague(AppException):
             message="A public league cannot have a password.",
             code="PASSWORD_NOT_ALLOWED_ON_PUBLIC_LEAGUE",
         )
+
+
+class LeagueNotFound(AppException):
+    def __init__(self):
+        super().__init__("La liga no existe", "LEAGUE_NOT_FOUND", status_code=404)
+
+
+class LeagueNotOpen(AppException):
+    def __init__(self):
+        super().__init__("La liga ya no admite inscripciones", "LEAGUE_NOT_OPEN")
+
+
+class WrongLeaguePassword(AppException):
+    def __init__(self):
+        super().__init__("La contraseña de la liga es incorrecta", "WRONG_LEAGUE_PASSWORD")
+
+
+class AlreadyInLeague(AppException):
+    def __init__(self):
+        super().__init__("Tu club ya está inscripto en esta liga", "ALREADY_IN_LEAGUE")
+
+
+class LeagueLimitReached(AppException):
+    def __init__(self, limit: int):
+        super().__init__(
+            f"Ya estás participando en el máximo de {limit} ligas", "LEAGUE_LIMIT_REACHED"
+        )
+
+
+class LeagueFull(AppException):
+    def __init__(self):
+        super().__init__("La liga no tiene cupos disponibles", "LEAGUE_FULL")
