@@ -206,12 +206,18 @@ def email_sender():
     class FakeEmailSender:
         def __init__(self):
             self.messages = []
+            self.password_reset_messages = []
             self.fail = False
 
         def send_verification(self, email, url):
             if self.fail:
                 raise RuntimeError("SMTP unavailable")
             self.messages.append((email, url))
+
+        def send_password_reset(self, email, url):
+            if self.fail:
+                raise RuntimeError("SMTP unavailable")
+            self.password_reset_messages.append((email, url))
 
     sender = FakeEmailSender()
     app.dependency_overrides[get_email_sender] = lambda: sender
