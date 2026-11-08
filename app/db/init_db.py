@@ -2,7 +2,7 @@ import ast
 import logging
 from pathlib import Path
 
-from sqlalchemy import Engine, func, inspect, select, text
+from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
 # Importar `app.models` registra las tablas en `Base.metadata`. Sin este

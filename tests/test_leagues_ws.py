@@ -111,7 +111,7 @@ def test_el_listado_inicial_trae_solo_ligas_publicas_no_canceladas(
             "name": "",
             "leagues": [{
                 "id": publica_id, "name": "Liga Publica", "participantsCount": 0,
-                "started": False, "isPrivate": False,
+                "started": False, "isPrivate": False, "hasPenaltyShootout": False,
             }],
         }
         assert len(leagues_hub.filters) == 1       # quedó suscripto

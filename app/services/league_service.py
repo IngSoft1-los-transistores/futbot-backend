@@ -86,6 +86,7 @@ class LeagueService:
                 participants_count=total,
                 started=room.status in STARTED_STATUSES,
                 is_private=False,                                # el listado solo incluye públicas
+                has_penalty_shootout=room.has_penalty_shootout,
             )
             for room, total in rows
         ]
