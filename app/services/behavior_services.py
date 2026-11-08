@@ -18,7 +18,8 @@ def get_all_behavior(db: Session, club_id: str):
         or_(
             Behavior.club_id == club_id,
             Behavior.club_id == None
-        )
+        ),
+        Behavior.deleted_at.is_(None)
     ).all()
 
 def erase_behavior_from_club(db: Session, club_id: str, behavior_id: str):
