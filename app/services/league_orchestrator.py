@@ -55,7 +55,7 @@ def ensure_match_players(db: Session, match: Match):
 def get_league_lobby_payload(db: Session, league_id: str) -> dict:
     """Calcula y consolida el estado completo de liga activa."""
     room = db.get(Room, league_id)
-    if not room or room.status != ROOM_STATUS_IN_PROGRESS:
+    if not room or room.status not in [ROOM_STATUS_IN_PROGRESS, ROOM_STATUS_FINISHED]:
         return None
 
     def get_club_name(club_id):
