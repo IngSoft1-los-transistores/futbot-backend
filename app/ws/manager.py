@@ -179,14 +179,19 @@ class LeagueRoomManager:
     async def broadcast_waiting(self, league_id: str, message: dict, exclude_club_id: str = None):
         for club_id, ws in list(self.waiting_rooms.get(league_id, {}).items()):
             if club_id != exclude_club_id:
-                await ws.send_json(message)
+                try:
+                    await ws.send_json(message)
+                except Exception:
+                    self.disconnect_waiting(league_id, club_id)
 
     async def broadcast_active(self, league_id: str, message: dict, exclude_club_id: str = None):
         for club_id, ws in list(self.active_rooms.get(league_id, {}).items()):
             if club_id != exclude_club_id:
-                await ws.send_json(message)
+                try:
+                    await ws.send_json(message)
+                except Exception:
+                    self.disconnect_waiting(league_id, club_id)
 
-league_manager= LeagueRoomManager()
 league_manager= LeagueRoomManager()
 
 class ActiveRoomsConnectionManager:

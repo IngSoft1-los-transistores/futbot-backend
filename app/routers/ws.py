@@ -175,7 +175,7 @@ async def league_waiting_room_ws(websocket: WebSocket,
 
                 # Validacion de estado de la liga
                 if not current_room or current_room.status != ROOM_STATUS_WAITING_GUEST:
-                    redirect_url = f"/league/{league_id}/active" if current_room and current_room.status == ROOM_STATUS_IN_PROGRESS else "/home"
+                    redirect_url = f"/league/{league_id}/live" if current_room and current_room.status == ROOM_STATUS_IN_PROGRESS else "/home"
                     event_type = "league_started" if current_room and current_room.status == ROOM_STATUS_IN_PROGRESS else "league_cancelled"
 
                     await websocket.send_json({
@@ -240,6 +240,9 @@ async def league_waiting_room_ws(websocket: WebSocket,
                             continue
 
                         current_room.status = ROOM_STATUS_IN_PROGRESS
+                        # Generar el fixture
+                        from app.services.league_orchestrator import generate_league_fixture
+                        generate_league_fixture(action_db, league_id)
                         action_db.commit()
 
                         # Disparar el orquestrador 
@@ -247,7 +250,7 @@ async def league_waiting_room_ws(websocket: WebSocket,
 
                         await league_manager.broadcast_waiting(league_id, {
                             "type": "league_started",
-                            "redirect_url": f"/league/{league_id}/active"
+                            "redirect_url": f"/league/{league_id}/live"
                         })
 
                     elif action == "cancel_league":
