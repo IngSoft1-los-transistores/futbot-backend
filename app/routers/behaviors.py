@@ -13,6 +13,7 @@ from app.models.club import Club
 from app.core.dependencies import get_current_user, get_current_club
 
 from app.schemas.behaviors import BehaviorRead, BehaviorCreate, BehaviorUpdate
+from app.services.behavior_services import get_all_behavior, erase_behavior_from_club
 from app.services import behavior_services
 from app.schemas.behavior_simulation import SimulationTicketCreate, SimulationTicketRead
 from app.services.behavior_simulation import get_simulation_resources
@@ -87,6 +88,28 @@ def create_simulation_ticket(
             detail="Error al crear ticket de simulación"
         )
 
+@router.delete(
+    "/behaviors/{behavior_id}",
+    status_code=status.HTTP_204_NO_CONTENT
+    )
+def erase_behavior(
+    behavior_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    try:
+        club_id = current_user.club.id
+        erase_behavior_from_club(db, club_id, behavior_id)
+        return
+    except HTTPException as he:
+        raise he
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(f"Error al eliminar comportamiento: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al eliminar comportamiento."
+        )
 @router.get(
         "/behaviors/{behavior_id}",
         response_model=BehaviorRead,
