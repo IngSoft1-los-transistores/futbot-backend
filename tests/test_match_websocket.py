@@ -136,12 +136,9 @@ def test_final_penalty_events_are_delivered_before_socket_closes(
         )
 
         received = [socket.receive_json() for _ in range(4)]
-        assert [message for message in received if message["type"] in {
-            "PENALTY_SHOT_RESULT",
-            "PENALTIES_TIEBREAK",
-            "PENALTIES_FINISHED",
-        }] == final_events
-        final_state = next(message for message in received if message["type"] == "state")
+        assert received[:3] == final_events
+        final_state = received[3]
+        assert final_state["type"] == "state"
         assert final_state["state"]["status"] == "finished"
         assert final_state["state"]["penalty"]["winner_club_id"] == demo.club_ids[1]
         with pytest.raises(WebSocketDisconnect) as closed:

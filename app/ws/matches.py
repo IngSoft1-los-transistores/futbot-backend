@@ -184,7 +184,6 @@ async def match_stream(socket: WebSocket, match_id: str, db: Session = Depends(g
                 changed = asyncio.create_task(subscription.queue.get())
                 state = message['state']
                 if state['revision'] > revision:
-                    await socket.send_json(message)
                     revision = state['revision']
                     if state['status'] == 'finished':
                         # Event delivery callbacks for this tick may still be queued.
@@ -196,8 +195,10 @@ async def match_stream(socket: WebSocket, match_id: str, db: Session = Depends(g
                             await socket.send_json(
                                 subscription.event_queue.get_nowait()
                             )
+                        await socket.send_json(message)
                         await socket.close(code=1000)
                         return
+                    await socket.send_json(message)
             if not pong_deadline and time() >= next_ping:
                 # Revalidación de permisos; no consulta ni sondea snapshots.
                 await run_in_threadpool(validate_access, bind, match_id, token)
