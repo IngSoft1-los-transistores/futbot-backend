@@ -17,6 +17,7 @@ from app.schemas.friendly_room import (
     FriendlyRoomStartRead,
     JoinFriendlyRoomRequest,
     JoinFriendlyRoomResponse,
+    PublicFriendlyRoomResponse
 )
 from app.services.friendly_rooms import get_friendly_room, start_friendly_match
 from app.services.friendly_service import FriendlyService
@@ -48,6 +49,17 @@ async def create_friendly_room(
     service = FriendlyService(db)
     return service.create_room(club_id=str(current_user.club.id), request=payload)
 
+@router.get(
+    "/public",
+    response_model=list[PublicFriendlyRoomResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Listar amistosos publicos en espera"
+)
+def list_public_friendly_rooms(
+    current_club: Club = Depends(get_current_club),
+    db: Session = Depends(get_db)
+):
+    return FriendlyService(db).list_public_rooms(club_id=str(current_club.id))
 
 @router.get("/{room_id}", response_model=FriendlyRoomRead)
 def read_friendly_room(
