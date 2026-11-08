@@ -115,6 +115,9 @@ class FriendlyService:
         if room.status != ROOM_STATUS_WAITING_GUEST:
             raise _room_unavailable()
 
+        if room.creator_club_id == club_id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="No podés unirte a tu propia sala.")
+
         validate_squad_selection(self.db, club_id, request.starters, request.substitutes)
 
         real_room_id = room.id
