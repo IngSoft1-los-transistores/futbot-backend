@@ -68,3 +68,12 @@ class ResendVerificationRequest(BaseModel):
 
 class RefreshRequest(BaseModel):
     refresh_token: SecretStr
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: SecretStr = Field(min_length=1, max_length=512)
+    new_password: SecretStr = Field(alias="newPassword", min_length=8, max_length=20)

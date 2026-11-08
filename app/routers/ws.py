@@ -9,8 +9,9 @@ from app.models.room import Room, ROOM_STATUS_WAITING_GUEST, ROOM_STATUS_IN_PROG
 from app.models.club import Club
 from app.models.user import User
 from app.ws.manager import room_manager as manager
-from app.ws.manager import league_manager
+from app.ws.manager import league_manager, active_rooms_manager
 from app.services.league_orchestrator import get_league_lobby_payload, run_next_league_match
+
 
 
 router = APIRouter()
@@ -210,6 +211,7 @@ async def league_waiting_room_ws(websocket: WebSocket,
                     updated_payload = get_room_payload(action_db)
                     await league_manager.broadcast_waiting(league_id, updated_payload)
                     await websocket.close(code=1000)
+                    await active_rooms_manager.broadcast_to_user(user.id, club_id, action_db)
                     break
 
                 elif action in ["start_league", "cancel_league"]:
@@ -256,6 +258,7 @@ async def league_waiting_room_ws(websocket: WebSocket,
                             "type": "league_cancelled",
                             "redirect_url": "/home"
                         })
+                        await active_rooms_manager.broadcast_to_user(user.id, club_id, action_db)
 
     except WebSocketDisconnect:
         league_manager.disconnect_waiting(league_id, club_id)
@@ -336,3 +339,51 @@ async def league_active_room_ws(
                 await websocket.send_json({"type": "pong"})
     except WebSocketDisconnect:
         league_manager.disconnect_active(league_id, club_id)
+
+
+
+@router.websocket("/ws/rooms/active")
+async def active_rooms_ws(
+    websocket: WebSocket,
+    db: Session = Depends(get_db)
+    ):
+    # Validacion de token
+    token = websocket.query_params.get("token")
+    if not token:
+        auth_header = websocket.headers.get("authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+    
+    user = None
+    if token:
+        try:
+            from app.core.security import decode_access_token
+            from app.models.auth_session import AuthSession
+            from time import time
+            claims = decode_access_token(token)
+            session = db.get(AuthSession, claims.get("sid"))
+            if session and not session.revoked and session.expires_at > time():
+                user = db.get(User, claims.get("sub"))
+        except Exception:
+            pass
+
+    if not user or not user.club:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="No autorizado o token invalido.")
+        db.close()
+        return
+
+    user_id = user.id
+    club_id = user.club.id
+
+    # Conectar y enviar listado inicial
+    await active_rooms_manager.connect(user_id, websocket)
+    await active_rooms_manager.send_active_rooms(user_id, club_id, db, websocket)
+    db.close()
+
+    try: 
+        while True:
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_text("pong")
+    except WebSocketDisconnect:
+        active_rooms_manager.disconnect(user_id, websocket)

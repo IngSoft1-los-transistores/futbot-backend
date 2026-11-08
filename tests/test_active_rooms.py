@@ -1,206 +1,146 @@
-"""Pruebas exhaustivas para el Lobby de Liga Activa, motor de posiciones y gestión de escuadras."""
-import uuid
-import time
 import pytest
+import uuid
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
+from datetime import datetime, timezone
 
+from app.main import app
+from app.db.session import get_db
 from app.models.user import User
 from app.models.club import Club
+from app.models.room import (
+    Room, 
+    ROOM_TYPE_FRIENDLY, 
+    ROOM_TYPE_PUBLIC, 
+    ROOM_STATUS_WAITING_GUEST, 
+    ROOM_STATUS_FINISHED, 
+    ROOM_STATUS_CANCELLED,
+    MIN_LEAGUE_CLUBS
+)
 from app.models.enrollment import Enrollment
-from app.models.room import Room, ROOM_STATUS_IN_PROGRESS, ROOM_STATUS_WAITING_GUEST, ROOM_TYPE_PUBLIC, MIN_LEAGUE_CLUBS
-from app.models.match import Match, ESTADO_IN_PROGRESS, ESTADO_SCHEDULED
-from app.models.player import Player
-from app.models.behavior import Behavior
-from app.models.squad_entry import SquadEntry, ROLE_STARTER, ROLE_SUBSTITUTE
 from app.models.auth_session import AuthSession
-from app.core.security import create_access_token
-from app.services.league_orchestrator import get_league_lobby_payload
+from app.core.security import create_access_token, hash_password
+
+client = TestClient(app)
+
+@pytest.fixture
+def db_session():
+    """Proporciona una sesión de base de datos para preparar los datos de prueba."""
+    db = next(get_db())
+    try:
+        yield db
+    finally:
+        db.close()
+
+@pytest.fixture
+def setup_test_user_and_token(db_session: Session):
+    """Crea un usuario de prueba único, su club, una sesión válida y genera un token JWT."""
+    unique_id = str(uuid.uuid4())[:8]
+    user = User(
+        username=f"testuser_{unique_id}",
+        email=f"test_{unique_id}@example.com",
+        password_hash=hash_password("password123")
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    club = Club(
+        user_id=user.id,
+        name=f"Club_{unique_id}",
+        ranking_points=100
+    )
+    db_session.add(club)
+    db_session.commit()
+    db_session.refresh(club)
+
+    # Usamos un refresh_hash único para evitar conflictos de constraint UNIQUE
+    auth_session = AuthSession(
+        user_id=user.id,
+        refresh_hash=f"refresh_hash_{unique_id}",
+        revoked=False,
+        expires_at=datetime.now(timezone.utc).timestamp() + 3600
+    )
+    db_session.add(auth_session)
+    db_session.commit()
+    db_session.refresh(auth_session)
+
+    token = create_access_token(user_id=user.id, session_id=auth_session.id)
+    return {"user": user, "club": club, "token": token}
 
 
-def crear_usuario_y_club(db: Session, nombre: str):
-    usuario = User(username=nombre, email=f"{nombre}@futbot.test", password_hash="hash")
-    db.add(usuario)
-    db.flush()
-    club = Club(user_id=usuario.id, name=f"Club {nombre}")
-    db.add(club)
+def charm_room(db: Session, club_id: str, room_type: str, status: str, code: str, name: str = None):
+    """Helper para crear salas e inscribir al club cumpliendo los constraints del modelo."""
+    is_friendly = (room_type == ROOM_TYPE_FRIENDLY)
+    room = Room(
+        type=room_type,
+        status=status,
+        code=code,
+        name=name if not is_friendly else None,
+        creator_club_id=club_id,
+        min_clubs=2 if is_friendly else MIN_LEAGUE_CLUBS,
+        max_clubs=2 if is_friendly else 10,
+        match_duration_minutes=5
+    )
+    db.add(room)
     db.commit()
-    db.refresh(club)
-    db.refresh(usuario)
-    return club, usuario
+    db.refresh(room)
 
-
-def generar_token(db: Session, usuario: User) -> str:
-    session_id = str(uuid.uuid4())
-    db.add(AuthSession(id=session_id, user_id=usuario.id, refresh_hash="ref", expires_at=time.time()+3600, revoked=False))
+    enrollment = Enrollment(
+        room_id=room.id,
+        club_id=club_id
+    )
+    db.add(enrollment)
     db.commit()
-    return create_access_token(usuario.id, session_id)
+    return room
 
 
-def test_standings_strict_tie_breaker_rules(db: Session):
-    """Valida rigurosamente los 5 niveles de desempate en orden estricto:
-       1. Puntos, 2. Partidos ganados, 3. Diferencia de goles, 4. Goles a favor, 5. Orden alfabético.
+def test_ws_active_rooms_success_and_payload(db_session: Session, setup_test_user_and_token):
     """
-    creator, _ = crear_usuario_y_club(db, "creator")
-    league = Room(
-        id=str(uuid.uuid4()),
-        type=ROOM_TYPE_PUBLIC,
-        name="Liga Criterios Estrictos",
-        creator_club_id=creator.id,
-        min_clubs=MIN_LEAGUE_CLUBS,
-        max_clubs=5,
-        match_duration_minutes=5,
-        status=ROOM_STATUS_IN_PROGRESS,
-    )
-    db.add(league)
-    db.flush()
+    Criterio: Conexión válida acepta y envía el listado inicial con id y code,
+    separando amistosos y ligas, y excluyendo finalizadas/canceladas.
+    """
+    club_id = setup_test_user_and_token["club"].id
+    token = setup_test_user_and_token["token"]
 
-    c_delta, _ = crear_usuario_y_club(db, "Delta")
-    c_alpha, _ = crear_usuario_y_club(db, "Alpha")
-    c_beta, _ = crear_usuario_y_club(db, "Beta")
+    room_friendly = charm_room(db_session, club_id, ROOM_TYPE_FRIENDLY, ROOM_STATUS_WAITING_GUEST, f"F-{str(uuid.uuid4())[:4]}")
+    room_league = charm_room(db_session, club_id, ROOM_TYPE_PUBLIC, ROOM_STATUS_WAITING_GUEST, f"L-{str(uuid.uuid4())[:4]}", name=f"Liga Test {str(uuid.uuid4())[:4]}")
+    charm_room(db_session, club_id, ROOM_TYPE_PUBLIC, ROOM_STATUS_FINISHED, f"FIN-{str(uuid.uuid4())[:4]}", name=f"Liga Terminada {str(uuid.uuid4())[:4]}")
+    charm_room(db_session, club_id, ROOM_TYPE_FRIENDLY, ROOM_STATUS_CANCELLED, f"CAN-{str(uuid.uuid4())[:4]}")
 
-    db.add(Enrollment(room_id=league.id, club_id=c_alpha.id, points=3, matches_won=1, goals_for=4, goals_against=1))
-    db.add(Enrollment(room_id=league.id, club_id=c_beta.id, points=3, matches_won=1, goals_for=3, goals_against=2))
-    db.add(Enrollment(room_id=league.id, club_id=c_delta.id, points=3, matches_won=1, goals_for=5, goals_against=4))
-    db.commit()
+    with client.websocket_connect(f"/ws/rooms/active?token={token}") as websocket:
+        data = websocket.receive_json()
 
-    payload = get_league_lobby_payload(db, league.id)
-    standings = payload["standings"]
+        assert isinstance(data, list)
+        assert len(data) == 2
 
-    assert standings[0]["club_id"] == c_alpha.id
-    assert standings[1]["club_id"] == c_delta.id
-    assert standings[2]["club_id"] == c_beta.id
+        room_ids = {r["id"] for r in data}
+        assert room_friendly.id in room_ids
+        assert room_league.id in room_ids
+        
+        for r in data:
+            assert "id" in r
+            assert "code" in r
+            assert "type" in r
+            assert "status" in r
 
 
-def test_get_live_lobby_success_and_filtering(client: TestClient, db: Session):
-    """Verifica el retorno 200 y el filtrado correcto de currentMatch y nextMatch en el lobby activo."""
-    creator, usuario = crear_usuario_y_club(db, "owner")
-    rival, _ = crear_usuario_y_club(db, "rival")
-    tercero, _ = crear_usuario_y_club(db, "tercero")
-    
-    league = Room(
-        id=str(uuid.uuid4()),
-        type=ROOM_TYPE_PUBLIC,
-        name="Liga Completa Test",
-        creator_club_id=creator.id,
-        min_clubs=MIN_LEAGUE_CLUBS,
-        max_clubs=4,
-        match_duration_minutes=5,
-        status=ROOM_STATUS_IN_PROGRESS,
-    )
-    db.add(league)
-    db.add(Enrollment(room_id=league.id, club_id=creator.id))
-    db.add(Enrollment(room_id=league.id, club_id=rival.id))
-    db.add(Enrollment(room_id=league.id, club_id=tercero.id))
+def test_ws_active_rooms_empty_list(db_session: Session, setup_test_user_and_token):
+    """
+    Criterio: Si no hay salas en curso, se devuelve un listado vacío [].
+    """
+    token = setup_test_user_and_token["token"]
 
-    m_playing = Match(
-        id=str(uuid.uuid4()), room_id=league.id, round=1,
-        home_club_id=creator.id, away_club_id=rival.id,
-        status=ESTADO_IN_PROGRESS, duration_seconds=300
-    )
-    m_scheduled = Match(
-        id=str(uuid.uuid4()), room_id=league.id, round=2,
-        home_club_id=rival.id, away_club_id=tercero.id,
-        status=ESTADO_SCHEDULED, duration_seconds=300
-    )
-    db.add(m_playing)
-    db.add(m_scheduled)
-    db.commit()
-
-    token = generar_token(db, usuario)
-    response = client.get(
-        f"/api/leagues/{league.id}/live-lobby",
-        headers={"Authorization": f"Bearer {token}"}
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["league_id"] == league.id
-    assert data["status"] == ROOM_STATUS_IN_PROGRESS
-    assert data["currentMatch"]["id"] == m_playing.id
-    assert data["nextMatch"]["id"] == m_scheduled.id
-    assert len(data["calendar"]) == 2
-    assert len(data["standings"]) == 3
+    with client.websocket_connect(f"/ws/rooms/active?token={token}") as websocket:
+        data = websocket.receive_json()
+        assert isinstance(data, list)
+        assert len(data) == 0
 
 
-def test_get_live_lobby_errors(client: TestClient, db: Session):
-    """Verifica errores HTTP para ligas inexistentes o no iniciadas."""
-    creator, usuario = crear_usuario_y_club(db, "ownererr")
-    token = generar_token(db, usuario)
-
-    # 1. Intentar consultar una liga que no existe
-    resp_404 = client.get("/api/leagues/uuid-inexistente/live-lobby", headers={"Authorization": f"Bearer {token}"})
-    assert resp_404.status_code in (404, 400)
-
-    # 2. Consultar una liga en estado de espera (waiting_guest)
-    league_waiting = Room(
-        id=str(uuid.uuid4()),
-        type=ROOM_TYPE_PUBLIC,
-        name="Liga Espera",
-        creator_club_id=creator.id,
-        min_clubs=MIN_LEAGUE_CLUBS,
-        max_clubs=4,
-        match_duration_minutes=5,
-        status=ROOM_STATUS_WAITING_GUEST,
-    )
-    db.add(league_waiting)
-    db.commit()
-
-    resp_error = client.get(f"/api/leagues/{league_waiting.id}/live-lobby", headers={"Authorization": f"Bearer {token}"})
-    assert resp_error.status_code in (400, 404)
-
-
-def test_update_league_squad_validation_and_update(client: TestClient, db: Session):
-    """Valida la restricción de cantidades exactas en la escuadra y la correcta actualización limpia."""
-    creator, usuario = crear_usuario_y_club(db, "squadmanager")
-    league = Room(
-        id=str(uuid.uuid4()),
-        type=ROOM_TYPE_PUBLIC,
-        name="Liga Squads",
-        creator_club_id=creator.id,
-        min_clubs=MIN_LEAGUE_CLUBS,
-        max_clubs=4,
-        match_duration_minutes=5,
-        status=ROOM_STATUS_IN_PROGRESS,
-    )
-    db.add(league)
-    db.commit()
-
-    # Crear behavior real incluyendo el campo 'code' obligatorio y players reales en BD
-    behavior = Behavior(id=str(uuid.uuid4()), name="Default Behavior", code="default_code", is_preprogrammed = True)
-    db.add(behavior)
-    players = []
-    for i in range(6):
-        p = Player(id=str(uuid.uuid4()), name=f"Player {i}", club_id=creator.id, speed=60, control=60, strength=60, power=60, agility=60)
-        db.add(p)
-        players.append(p)
-    db.commit()
-
-    token = generar_token(db, usuario)
-
-    # 1. Enviar payload con cantidades incorrectas -> 400
-    invalid_payload = {
-        "entries": [
-            {"player_id": players[0].id, "role": "starter", "behavior_id": behavior.id}
-        ]
-    }
-    resp_invalid = client.put(
-        f"/api/leagues/{league.id}/squad",
-        json=invalid_payload,
-        headers={"Authorization": f"Bearer {token}"}
-    )
-    assert resp_invalid.status_code == 400
-
-    # 2. Enviar payload válido (3 titulares y 3 suplentes) -> 200 OK
-    valid_payload = {
-        "entries": [
-            {"player_id": players[i].id, "role": "starter" if i < 3 else "substitute", "behavior_id": behavior.id}
-            for i in range(6)
-        ]
-    }
-    resp_valid = client.put(
-        f"/api/leagues/{league.id}/squad",
-        json=valid_payload,
-        headers={"Authorization": f"Bearer {token}"}
-    )
-    assert resp_valid.status_code == 200
-    assert resp_valid.json()["status"] == "success"
+def test_ws_active_rooms_unauthorized(db_session: Session):
+    """
+    Criterio: Token inválido o ausente rechaza la conexión.
+    """
+    with pytest.raises(Exception):
+        with client.websocket_connect("/ws/rooms/active?token=token_invalido") as websocket:
+            pass

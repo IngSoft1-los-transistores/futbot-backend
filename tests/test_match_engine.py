@@ -5,7 +5,7 @@ from app.engine.field import FieldConfig
 from app.engine.match_engine import MatchEngine
 from app.engine.schedule import build_schedule
 from app.engine.setup import PlayerSpec, create_initial_state
-from app.engine.state import MatchPhase as P, Team, Vec2
+from app.engine.state import MatchPhase as P, PlayerState, Team, Vec2
 
 
 class Cfg:
@@ -47,6 +47,23 @@ async def play_until_finished(eng, limit=1000):
         phases.append(eng.state.phase)
         await eng.tick()
     return phases
+
+
+def register_home_substitute(eng, player_id="h3"):
+    eng.set_substitute(
+        Team.HOME,
+        player_id,
+        PlayerState(
+            id=player_id,
+            team=Team.HOME,
+            pos=Vec2(),
+            speed=60,
+            control=60,
+            strength=60,
+            power=60,
+            agility=60,
+        ),
+    )
 
 
 # ---------- Reloj ----------
@@ -183,3 +200,127 @@ async def test_own_goal_has_no_author(make_engine):
     await eng.tick()
     assert eng.state.goals[0].player_id is None
     assert eng.state.score[Team.HOME] == 1
+
+
+@pytest.mark.asyncio
+async def test_pending_substitution_is_stored_in_memory_and_applies_on_pause(make_engine):
+    eng = make_engine()
+    eng.start()
+    register_home_substitute(eng)
+
+    result = eng.request_substitution(Team.HOME, "h0", "h3")
+
+    assert result["ok"] is True
+    assert result["status"] == "scheduled"
+    assert eng.pending_substitution[Team.HOME]["outPlayerId"] == "h0"
+    assert eng.pending_substitution[Team.HOME]["inPlayerId"] == "h3"
+    assert eng.ws_events[-1]["type"] == "SUBSTITUTION_SCHEDULED"
+
+    eng.state.phase_tick = eng.schedule[0].ticks - 1
+    await eng.tick()
+
+    assert eng.state.phase == P.HYDRATION
+    assert eng.pending_substitution[Team.HOME] is None
+    assert eng.changes_used_this_pause[Team.HOME] == 1
+    assert eng.ws_events[-1]["type"] == "SUBSTITUTION_APPLIED"
+    assert "h3" in {player.id for player in eng.state.players}
+    assert "h0" not in {player.id for player in eng.state.players}
+
+
+@pytest.mark.asyncio
+async def test_substitution_applies_immediately_during_pause(make_engine):
+    eng = make_engine()
+    eng.start()
+    eng.state.phase = P.HYDRATION
+    register_home_substitute(eng)
+
+    result = eng.request_substitution(Team.HOME, "h0", "h3")
+
+    assert result["ok"] is True
+    assert result["status"] == "applied"
+    assert eng.changes_used_this_pause[Team.HOME] == 1
+    assert eng.ws_events[-1]["type"] == "SUBSTITUTION_APPLIED"
+    assert "h3" in {player.id for player in eng.state.players}
+    assert "h0" not in {player.id for player in eng.state.players}
+
+
+@pytest.mark.asyncio
+async def test_substitution_is_blocked_if_already_used_this_pause(make_engine):
+    eng = make_engine()
+    eng.start()
+    eng.state.phase = P.HYDRATION
+    eng.changes_used_this_pause[Team.HOME] = 1
+    register_home_substitute(eng)
+
+    result = eng.request_substitution(Team.HOME, "h0", "h3")
+
+    assert result["ok"] is False
+    assert result["message"] == "Solo se permite 1 cambio por pausa"
+    assert result["error_code"] == "SUBSTITUTION_LIMIT_REACHED"
+    assert eng.pending_substitution[Team.HOME] is None
+
+
+def test_substitution_is_rejected_when_no_future_pause_exists(make_engine):
+    eng = make_engine()
+    eng.start()
+    eng._segment_index = len(eng.schedule) - 1
+    eng.state.phase = P.PLAY
+    eng.state.period = 4
+    register_home_substitute(eng)
+
+    result = eng.request_substitution(Team.HOME, "h0", "h3")
+
+    assert result["ok"] is False
+    assert result["error_code"] == "SUBSTITUTION_NO_FUTURE_PAUSE"
+    assert eng.pending_substitution[Team.HOME] is None
+
+
+@pytest.mark.parametrize(
+    ("out_player_id", "in_player_id", "coach_active", "phase", "error_code"),
+    [
+        ("invalid", "h3", False, P.PLAY, "SUBSTITUTION_INVALID_OUT_PLAYER"),
+        ("h0", "invalid", False, P.PLAY, "SUBSTITUTION_INVALID_IN_PLAYER"),
+        ("h0", "h3", True, P.PLAY, "SUBSTITUTION_COACH_ACTIVE"),
+        ("h0", "h3", False, P.PRE, "SUBSTITUTION_INVALID_PHASE"),
+    ],
+)
+def test_substitution_rejections_include_error_codes(
+    make_engine, out_player_id, in_player_id, coach_active, phase, error_code
+):
+    eng = make_engine()
+    eng.start()
+    eng.state.phase = phase
+    eng.coach_active[Team.HOME] = coach_active
+    register_home_substitute(eng)
+
+    result = eng.request_substitution(Team.HOME, out_player_id, in_player_id)
+
+    assert result["ok"] is False
+    assert result["error_code"] == error_code
+
+
+def test_rejected_substitution_reports_already_pending_error_code(make_engine):
+    eng = make_engine()
+    eng.start()
+    register_home_substitute(eng)
+    eng.pending_substitution[Team.HOME] = {
+        "outPlayerId": "h1",
+        "inPlayerId": "h3",
+    }
+
+    result = eng.request_substitution(Team.HOME, "h0", "h3")
+
+    assert result["ok"] is False
+    assert result["error_code"] == "SUBSTITUTION_ALREADY_PENDING"
+
+
+@pytest.mark.asyncio
+async def test_resume_clears_changes_used_this_pause(make_engine):
+    eng = make_engine()
+    eng.start()
+    eng.state.phase = P.HYDRATION
+    eng.changes_used_this_pause[Team.HOME] = 1
+
+    eng._enter_segment(0)
+
+    assert eng.changes_used_this_pause[Team.HOME] == 0
