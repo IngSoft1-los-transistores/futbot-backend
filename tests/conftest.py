@@ -25,6 +25,10 @@ from app.models.behavior import Behavior
 from app.models.club import Club
 from app.models.player import Player
 from app.models.user import User
+from app.models.match import Match, ESTADO_PRE_MATCH
+from app.models.match_player import MatchPlayer
+from app.models.room import ( Room, ROOM_TYPE_FRIENDLY, ROOM_STATUS_READY_TO_START,
+)
 
 
 @pytest.fixture
@@ -257,3 +261,76 @@ def email_sender():
     app.dependency_overrides[get_email_sender] = lambda: sender
     yield sender
     app.dependency_overrides.pop(get_email_sender, None)
+
+@pytest.fixture
+def behavior_personalizado(db: Session, club: Club) -> Behavior:
+    """Crea un comportamiento custom del usuario (no preprogramado)."""
+    behavior = Behavior(
+        club_id=club.id,
+        name="Mi script loco",
+        code="""
+def behavior(player):
+   pelota = player.encontrar_pelota()
+   player.correr(pelota)
+""",
+        is_preprogrammed=False,
+    )
+    db.add(behavior)
+    db.commit()
+    return behavior
+
+
+@pytest.fixture
+def match_en_pre_match(
+    db: Session, 
+    club: Club, 
+    other_club: Club, 
+    club_players, 
+    other_club_players, 
+    behavior_personalizado,
+    comportamiento_prueba # Usamos el preprogramado para rellenar
+) -> Match:
+    room = Room(
+        type=ROOM_TYPE_FRIENDLY,
+        creator_club_id=club.id,
+        min_clubs=2,
+        max_clubs=2,
+        match_duration_minutes=5,
+        status=ROOM_STATUS_READY_TO_START,
+    )
+    db.add(room)
+    db.commit()
+
+    """Crea un partido válido 3v3 en estado PRE_MATCH."""
+    match = Match(
+        room_id=room.id,
+        home_club_id=club.id,
+        away_club_id=other_club.id,
+        status=ESTADO_PRE_MATCH,
+        duration_seconds=300,
+        pause_duration_seconds=10
+    )
+    db.add(match)
+    db.commit()
+
+    for i in range(3):
+        b_id = behavior_personalizado.id if i == 0 else comportamiento_prueba.id
+        db.add(MatchPlayer(
+            match_id=match.id,
+            club_id=club.id,
+            player_id=club_players[i].id,
+            behavior_id=b_id,
+            on_field=True
+        ))
+    
+    for i in range(3):
+        db.add(MatchPlayer(
+            match_id=match.id,
+            club_id=other_club.id,
+            player_id=other_club_players[i].id,
+            behavior_id=comportamiento_prueba.id,
+            on_field=True
+        ))
+        
+    db.commit()
+    return match
