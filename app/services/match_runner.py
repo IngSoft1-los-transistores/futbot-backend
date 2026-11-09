@@ -7,13 +7,16 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.db.base import ahora_utc
 from app.engine.field import FieldConfig
 from app.engine.live_state import match_states
-from app.engine.match_engine import MatchEngine
+from app.engine.match_engine import MatchEngine, PENALTY_MAX_SECONDS
 from app.engine.schedule import build_schedule
 from app.engine.setup import PlayerSpec, create_initial_state
 from app.engine.state import MatchPhase, PlayerState, Team, Vec2, publish_engine_tick
 from app.models.match import ESTADO_IN_PROGRESS, ESTADO_PRE_MATCH, Match
 from app.models.match_player import MatchPlayer
 from app.models.player import Player
+from app.behaviors.loader import compile_and_cache_behavior
+from app.models.behavior import Behavior
+from app.models.room import Room
 from app.schemas.match_state import PHASE_STATUS, MatchTick
 from app.ws.manager import manager
 
@@ -26,9 +29,12 @@ TICK_PHASES = {
     MatchPhase.PLAY: "PLAYING",
     MatchPhase.HYDRATION: "HYDRATION",
     MatchPhase.HALFTIME: "HALFTIME",
+    MatchPhase.PENALTIES: "PENALTIES",
     MatchPhase.FINISHED: "FINISHED",
 }
 
+def get_live_engine(match_id: str) -> MatchEngine | None:
+    return _engines.get(match_id)
 
 def build_engine_from_db(
     db: Session, match_id: str, cfg,
@@ -37,6 +43,9 @@ def build_engine_from_db(
     match = db.get(Match, match_id)
     if match is None:
         raise LookupError(f"Partido {match_id} no existe")
+    room = db.get(Room, match.room_id)
+    if room is None:
+        raise LookupError(f"Sala {match.room_id} del partido no existe")
 
     rows = db.execute(
         select(MatchPlayer, Player)
@@ -56,6 +65,31 @@ def build_engine_from_db(
             substitutes[team].append(spec)
         behaviors[pl.id] = mp.behavior_id
 
+    behavior_ids = set(behaviors.values())
+    if behavior_ids:
+        # Buscamos los comportamientos en la base de datos
+        behavior_rows = db.scalars(
+            select(Behavior).where(
+                Behavior.id.in_(behavior_ids),
+                Behavior.deleted_at.is_(None)
+            )
+        ).all()
+
+        # Validamos que no falte ninguno
+        found_ids = {b.id for b in behavior_rows}
+        missing_ids = behavior_ids - found_ids
+
+        if missing_ids:
+            raise LookupError(f"Comportamientos no encontrados en la DB: {missing_ids}")
+
+        # Los compilamos y forzamos a guardarlos en caché
+        for behavior in behavior_rows:
+            compile_and_cache_behavior(
+                behavior_id=behavior.id,
+                code=behavior.code,
+                overwrite=True  # Pisa la versión vieja si el usuario lo editó
+            )
+    
     field = FieldConfig()
     state = create_initial_state(field, home, away)      # valida 3 por equipo
     schedule = build_schedule(
@@ -64,7 +98,13 @@ def build_engine_from_db(
         halftime_seconds=match.pause_duration_seconds,
     )
     engine = MatchEngine(
-        state, field, cfg, behaviors, schedule=schedule,
+        state,
+        field,
+        cfg,
+        behaviors,
+        schedule=schedule,
+        has_penalty_shootout=room.has_penalty_shootout,
+        club_ids={Team.HOME: match.home_club_id, Team.AWAY: match.away_club_id},
     )
     for team, specs in substitutes.items():
         for spec in specs:
@@ -131,9 +171,32 @@ def capture_tick(engine, roster, club_of, previous_goals=0):
                 "y": (point.y / field.width - .5) * 60}
     active = {player.id: player for player in state.players}
     phase = TICK_PHASES[state.phase]
+    penalty = None
+    if engine._penalty_full_roster is not None:
+        penalty = {
+            "shooter_id": engine._penalty_shooter.id if engine._penalty_shooter else None,
+            "goalkeeper_id": engine._penalty_goalkeeper.id if engine._penalty_goalkeeper else None,
+            "score": {
+                Team.HOME.value: engine.penalty_score[Team.HOME],
+                Team.AWAY.value: engine.penalty_score[Team.AWAY],
+            },
+            "attempts": {
+                Team.HOME.value: engine.penalty_attempts[Team.HOME],
+                Team.AWAY.value: engine.penalty_attempts[Team.AWAY],
+            },
+            "seconds_remaining": max(
+                0,
+                PENALTY_MAX_SECONDS - engine._penalty_ticks * engine.dt,
+            ) if state.phase == MatchPhase.PENALTIES else 0,
+            "winner_club_id": (
+                club_of[engine.penalty_winner]
+                if engine.penalty_winner is not None else None
+            ),
+        }
     return MatchTick.model_validate({
         "status": PHASE_STATUS[phase],
         "phase": phase,
+        "penalty": penalty,
         "pause_duration": engine.pause_seconds,
         "pause_remaining": engine.pause_remaining_seconds,
         "current_time": state.play_ticks / engine.cfg.match_tick_rate,
@@ -155,12 +218,33 @@ async def _play(match_id, engine, roster, club_of, sessions, notifier):
     deadline = loop.time()
     try:
         while engine.state.phase != MatchPhase.FINISHED:
-            await engine.tick()
+            previous_phase = engine.state.phase
+            deferred_events = []
+            event_callback = engine.on_ws_event
+            engine.on_ws_event = deferred_events.append
+            try:
+                await engine.tick()
+            finally:
+                engine.on_ws_event = event_callback
             with sessions() as db:
                 published = publish_engine_tick(
                     db, match_id, capture_tick(engine, roster, club_of, goals),
-                    expected_revision=revision)
+                    expected_revision=revision,
+                    penalty_winner_club_id=(
+                        club_of[engine.penalty_winner]
+                        if engine.penalty_winner is not None else None
+                    ),
+                    events=deferred_events,
+                )
             revision, goals = published.revision, len(engine.state.goals)
+            if (
+                engine.realtime
+                and previous_phase != MatchPhase.PENALTIES
+                and engine.state.phase == MatchPhase.PENALTIES
+            ):
+                await asyncio.sleep(1)
+                deadline = loop.time()
+                continue
             deadline += engine.dt
             await asyncio.sleep(max(0, deadline - loop.time()) if engine.realtime else 0)
         if notifier:

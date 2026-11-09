@@ -56,7 +56,7 @@ def create_behavior(db: Session, club_id: str | None, name: str) -> Behavior:
     behavior = Behavior(
         club_id=club_id,
         name=name,
-        code="def comportamiento(jugador):\n    pass\n",
+        code="def behavior(player):\n    pass\n",
         is_preprogrammed=club_id is None,
     )
     db.add(behavior)

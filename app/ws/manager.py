@@ -159,16 +159,38 @@ class LeagueRoomManager:
         self.waiting_rooms[league_id][club_id] = ws
         return True
 
+    async def connect_active(self, league_id: str, club_id: str, ws: WebSocket) -> None:
+        if league_id not in self.active_rooms:
+            self.active_rooms[league_id] = {}
+        self.active_rooms[league_id][club_id] = ws
+
     def disconnect_waiting(self, league_id: str, club_id: str):
         if league_id in self.waiting_rooms:
             self.waiting_rooms[league_id].pop(club_id, None)
             if not self.waiting_rooms[league_id]:
                 del self.waiting_rooms[league_id]
 
+    def disconnect_active(self, league_id: str, club_id: str) -> None:
+        if league_id in self.active_rooms:
+            self.active_rooms[league_id].pop(club_id, None)
+            if not self.active_rooms[league_id]:
+                del self.active_rooms[league_id]
+
     async def broadcast_waiting(self, league_id: str, message: dict, exclude_club_id: str = None):
         for club_id, ws in list(self.waiting_rooms.get(league_id, {}).items()):
             if club_id != exclude_club_id:
-                await ws.send_json(message)
+                try:
+                    await ws.send_json(message)
+                except Exception:
+                    self.disconnect_waiting(league_id, club_id)
+
+    async def broadcast_active(self, league_id: str, message: dict, exclude_club_id: str = None):
+        for club_id, ws in list(self.active_rooms.get(league_id, {}).items()):
+            if club_id != exclude_club_id:
+                try:
+                    await ws.send_json(message)
+                except Exception:
+                    self.disconnect_waiting(league_id, club_id)
 
 league_manager= LeagueRoomManager()
 

@@ -98,7 +98,7 @@ def create_demo(db: Session, duration: int = 120) -> Demo:
         emails.append(email)
         clubs.append(club.id)
         behavior = Behavior(club_id=club.id, name='Demo sin motor',
-                            code='def comportamiento(jugador):\n    pass\n', is_preprogrammed=False)
+                            code='def behavior(player):\n    pass\n', is_preprogrammed=False)
         db.add(behavior)
         db.flush()
         squad = []

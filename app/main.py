@@ -12,15 +12,18 @@ from app.behaviors.loader import precargar_preprogramados
 from app.core.config import settings
 from app.db.init_db import cargar_comportamientos_por_defecto, crear_tablas
 from app.db.session import SessionLocal, engine
-from app.routers import health, auth, behaviors, friendly_rooms, players, ws, matches, leagues, leagues_ws, public_friendly_ws
+from app.routers import health, auth, behaviors, friendly_rooms, players, ws, matches, leagues, leagues_ws, league_lobby, public_friendly_ws
 from app.routers import clubs
 from app.ws.matches import router as match_stream_router
+from app.ws.behavior_simulation import router as behavior_simulation_router
 from app.services.match_runner import stop_matches
 from app.services.match_recovery import recover_interrupted_friendly_matches
+
 from app.ws.leagues_events import register_league_events
 from app.ws.leagues_hub import leagues_hub
 from app.ws.public_friendly_hub import public_friendly_hub
 import asyncio
+
 logger = logging.getLogger(__name__)
 
 
@@ -125,7 +128,10 @@ app.include_router(matches.router)
 app.include_router(match_stream_router)
 
 app.include_router(leagues.router)
+
+app.include_router(behavior_simulation_router)
 app.include_router(leagues_ws.router)
+app.include_router(league_lobby.router)
 app.include_router(public_friendly_ws.router)
 
 app.include_router(clubs.router)
