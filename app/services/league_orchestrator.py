@@ -52,7 +52,7 @@ def ensure_match_players(db: Session, match: Match):
             db.add(mp)
     db.commit()
 
-def get_league_lobby_payload(db: Session, league_id: str) -> dict:
+def get_league_lobby_payload(db: Session, league_id: str, club_id: str | None = None) -> dict:
     """Calcula y consolida el estado completo de liga activa."""
     room = db.get(Room, league_id)
     if not room or room.status not in [ROOM_STATUS_IN_PROGRESS, ROOM_STATUS_FINISHED]:
@@ -112,12 +112,34 @@ def get_league_lobby_payload(db: Session, league_id: str) -> dict:
             x["club_name"].lower()
         )
     )
+    # Info adicional, como la alineación del club del usuario
+    my_squad = []
+
+    if club_id is not None:
+        my_squad = [
+            {
+                "player_id": entry.player_id,
+                "name": player.name,
+                "role": entry.role,
+            }
+            for entry, player in db.execute(
+                select(SquadEntry, Player)
+                .join(Player, Player.id == SquadEntry.player_id)
+                .where(
+                    SquadEntry.room_id == league_id,
+                    Player.club_id == club_id,
+                    Player.deleted_at.is_(None),
+                )
+                .order_by(SquadEntry.role, SquadEntry.player_id)
+            ).all()
+        ]
 
     return {
         "type": "league_lobby_update",
         "league_id": room.id,
         "league_name": room.name,
         "status": room.status,
+        "my_squad": my_squad,
         "currentMatch": {
             "id": current_match.id,
             "home_club_id": current_match.home_club_id,

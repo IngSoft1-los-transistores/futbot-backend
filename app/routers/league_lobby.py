@@ -4,11 +4,13 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.core.dependencies import get_current_user
 from app.models.user import User
-from app.models.room import Room, ROOM_STATUS_IN_PROGRESS
+from app.models.room import Room
 from app.models.club import Club
 from app.models.squad_entry import SquadEntry, ROLE_STARTER, ROLE_SUBSTITUTE, STARTER_COUNT, SUBSTITUTE_COUNT
 from app.services.league_orchestrator import get_league_lobby_payload
 from pydantic import BaseModel, Field
+from app.schemas.league import LineupUpdateRequest, LineupUpdateResponse
+from app.services.league_lobby_services import update_lineup_service
 
 router = APIRouter(prefix="/api/leagues", tags=["league-lobby"])
 
@@ -22,7 +24,18 @@ class SquadUpdateRequest(BaseModel):
 
 @router.get("/{league_id}/live-lobby")
 def get_live_lobby(league_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    payload = get_league_lobby_payload(db, league_id)
+    # Obtengo el club del usuario
+    club = db.scalar(
+        select(Club).where(Club.user_id == user.id)
+    )
+
+    if club is None:
+        raise HTTPException(
+            status_code=403,
+            detail="El usuario no posee un club",
+        )
+    
+    payload = get_league_lobby_payload(db, league_id, club.id)
     if not payload:
         raise HTTPException(status_code=400, detail="La liga no existe o no está en progreso")
     return payload
@@ -79,3 +92,19 @@ def update_league_squad(
 
     db.commit()
     return {"status": "success", "message": "Plantilla actualizada correctamente"}
+
+@router.put(
+    "/{league_id}/lineup",
+    response_model=LineupUpdateResponse,
+    status_code=200,
+)
+def update_lineup(
+    league_id: str,
+    payload: LineupUpdateRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+
+    result = update_lineup_service(db=db, league_id=league_id, payload=payload, user=user)
+    
+    return result
