@@ -24,7 +24,18 @@ class SquadUpdateRequest(BaseModel):
 
 @router.get("/{league_id}/live-lobby")
 def get_live_lobby(league_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    payload = get_league_lobby_payload(db, league_id)
+    # Obtengo el club del usuario
+    club = db.scalar(
+        select(Club).where(Club.user_id == user.id)
+    )
+
+    if club is None:
+        raise HTTPException(
+            status_code=403,
+            detail="El usuario no posee un club",
+        )
+    
+    payload = get_league_lobby_payload(db, league_id, club.id)
     if not payload:
         raise HTTPException(status_code=400, detail="La liga no existe o no está en progreso")
     return payload
