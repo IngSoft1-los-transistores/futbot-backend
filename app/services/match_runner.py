@@ -98,7 +98,6 @@ def build_engine_from_db(
         halftime_seconds=match.pause_duration_seconds,
     )
     engine = MatchEngine(
-    engine = MatchEngine(
         state,
         field,
         cfg,
@@ -106,7 +105,6 @@ def build_engine_from_db(
         schedule=schedule,
         has_penalty_shootout=room.has_penalty_shootout,
         club_ids={Team.HOME: match.home_club_id, Team.AWAY: match.away_club_id},
-    )
     )
     for team, specs in substitutes.items():
         for spec in specs:
