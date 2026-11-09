@@ -17,4 +17,10 @@ def club_ranking(
     db: Session = Depends(get_db),
     club: Club = Depends(get_current_club),
 ) -> ClubRankingResponse:
+    """Ranking global ordenado por puntos descendentes y nombre ascendente.
+
+    Requiere un JWT vigente. Las posiciones son globales, comenzando en 1;
+    userClubRanking incluye al solicitante aunque no aparezca en la página.
+    Una página fuera de rango devuelve 200 con items vacío y conserva los totales.
+    """
     return get_club_ranking(db, club.id, page, size)

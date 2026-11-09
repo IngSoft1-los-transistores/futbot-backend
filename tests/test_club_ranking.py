@@ -60,6 +60,30 @@ def test_service_single_club_and_exact_page(db, club):
     assert get_club_ranking(db, club.id, page=2, size=1).items == []
 
 
+def test_service_default_page_with_requester_on_next_page(db, club):
+    for index in range(20):
+        user = User(
+            username=f"ranked-{index}",
+            email=f"ranked-{index}@test.com",
+            password_hash="test",
+        )
+        user.club = Club(name=f"Club {index:02d}", ranking_points=20 - index)
+        db.add(user)
+    db.commit()
+
+    first = get_club_ranking(db, club.id)
+    second = get_club_ranking(db, club.id, page=2)
+
+    assert (first.page, first.size, first.total_pages, first.total_clubs) == (1, 20, 2, 21)
+    assert [item.position for item in first.items] == list(range(1, 21))
+    assert [item.ranking_points for item in first.items] == list(range(20, 0, -1))
+    assert club.id not in [item.club_id for item in first.items]
+    assert first.user_club_ranking.position == 21
+    assert first.user_club_ranking.ranking_points == 0
+    assert [(item.club_id, item.position) for item in second.items] == [(club.id, 21)]
+    assert second.user_club_ranking == first.user_club_ranking
+
+
 def test_http_contract(client, auth_headers, ranked_clubs):
     response = client.get("/api/clubs/ranking?page=1&size=2", headers=auth_headers)
     assert response.status_code == 200

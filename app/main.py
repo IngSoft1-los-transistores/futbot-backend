@@ -18,6 +18,7 @@ from app.ws.matches import router as match_stream_router
 from app.ws.behavior_simulation import router as behavior_simulation_router
 from app.services.match_runner import stop_matches
 from app.services.match_recovery import recover_interrupted_friendly_matches
+from app.services.league_ranking import recover_finished_league_rankings
 
 from app.ws.leagues_events import register_league_events
 from app.ws.leagues_hub import leagues_hub
@@ -37,6 +38,7 @@ async def lifespan(app: FastAPI):
         cargar_comportamientos_por_defecto(db)
         precargar_preprogramados(db)
         recover_interrupted_friendly_matches(db)
+        recover_finished_league_rankings(db)
     finally:
         db.close()
 
