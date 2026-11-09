@@ -24,6 +24,7 @@ from app.schemas.league import (
     ListLeagueResponse,
     LeagueStanding,
 )
+from app.ws.leagues_hub import leagues_hub
 from app.services.exceptions_league import LeagueNotFound
 from app.models.club import Club
 from app.services.exceptions_player import AppException
