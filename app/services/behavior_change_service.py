@@ -1,8 +1,13 @@
+import logging
+
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
+from app.behaviors.loader import compile_and_cache_behavior
 from app.models.behavior import Behavior
 from app.models.match_player import MatchPlayer
+
+logger = logging.getLogger(__name__)
 
 
 def behavior_belongs_to_club(db: Session, behavior_id: str, club_id: str) -> bool:
@@ -15,6 +20,7 @@ def behavior_belongs_to_club(db: Session, behavior_id: str, club_id: str) -> boo
     )
     return found is not None
 
+
 def save_current_behavior(db: Session, match_id: str, player_id: str, behavior_id: str) -> None:
     db.execute(
         update(MatchPlayer)
@@ -22,3 +28,17 @@ def save_current_behavior(db: Session, match_id: str, player_id: str, behavior_i
         .values(behavior_id=behavior_id)
     )
     db.commit()
+
+
+def compile_behavior(db: Session, behavior_id: str) -> bool:
+    behavior = db.get(Behavior, behavior_id)
+    if behavior is None or behavior.deleted_at is not None:
+        return False
+    if behavior.is_preprogrammed:
+        return True
+    try:
+        compile_and_cache_behavior(behavior.id, behavior.code, overwrite=True)
+    except Exception:
+        logger.exception("No se pudo compilar el comportamiento %s", behavior_id)
+        return False
+    return True

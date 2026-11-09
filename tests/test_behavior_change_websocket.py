@@ -53,7 +53,7 @@ def own_behavior(db, demo):
     behavior = Behavior(
         club_id=demo.club_ids[0],
         name="Cambio en vivo",
-        code="def decide(ctx): pass",
+        code="def behavior(player):\n    pass",
         is_preprogrammed=False,
     )
     db.add(behavior)

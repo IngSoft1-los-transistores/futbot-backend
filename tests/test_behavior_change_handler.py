@@ -38,7 +38,7 @@ def make_behavior(db, club_id, name="Mi comportamiento", deleted=False):
     behavior = Behavior(
         club_id=club_id,
         name=name,
-        code="def decide(ctx): pass",
+        code="def behavior(player):\n    pass",
         is_preprogrammed=club_id is None,
         deleted_at=ahora_utc() if deleted else None,
     )
@@ -177,3 +177,15 @@ async def test_rejection_does_not_close_the_socket(db, club, match_engine, socke
 
     assert socket.sent[0]["type"] == "error"
     assert socket.closed is False
+
+@pytest.mark.asyncio
+async def test_behavior_with_invalid_code_is_rejected(db, club, match_engine, socket):
+    behavior = make_behavior(db, club.id)
+    behavior.code = "esto no es python"
+    db.commit()
+    payload = {"playerId": "h0", "behaviorId": behavior.id}
+
+    await handle_change_behavior(socket, db.get_bind(), match_engine, club.id, payload, "match-1")
+
+    assert socket.sent[0]["error_code"] == "BEHAVIOR_CHANGE_BEHAVIOR_INVALID"
+    assert match_engine._pending_behavior_changes == []
