@@ -52,9 +52,9 @@ def obtener_funcion_comportamiento(behavior_id: str) -> Callable:
         raise ComportamientoNoEncontrado(behavior_id)
     return funcion
 
-def compile_and_cache_behavior(behavior_id: str, code:str) -> callable:
+def compile_and_cache_behavior(behavior_id: str, code:str, overwrite: bool = False,) -> callable:
     """Compila el código de un comportamiento y lo cachea en memoria."""
-    if behavior_id in _cache:
+    if behavior_id in _cache and not overwrite:
         return _cache[behavior_id]
     namespace: dict = {"__builtins__": BUILTINS_RESTRINGIDOS}
     try:
