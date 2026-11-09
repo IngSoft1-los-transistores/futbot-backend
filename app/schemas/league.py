@@ -112,3 +112,17 @@ class LeagueDetailRead(BaseModel):
     is_enrolled: bool
     # Only the requesting club's squad; None when it is not enrolled.
     my_squad: list[LeagueSquadPlayerRead] | None
+
+
+class LineupUpdateRequest(BaseModel):
+    starters: list[str] = Field(min_length=3, max_length=3)
+    substitutes: list[str] = Field(min_length=3, max_length=3)
+
+
+class LineupUpdateResponse(BaseModel):
+    message: str
+    effective_next_match: bool = Field(alias="effectiveNextMatch")
+    starters: list[str]
+    substitutes: list[str]
+
+    model_config = ConfigDict(populate_by_name=True)
