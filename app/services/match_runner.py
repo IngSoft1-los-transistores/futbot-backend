@@ -33,6 +33,8 @@ TICK_PHASES = {
     MatchPhase.FINISHED: "FINISHED",
 }
 
+def get_live_engine(match_id: str) -> MatchEngine | None:
+    return _engines.get(match_id)
 
 def build_engine_from_db(
     db: Session, match_id: str, cfg,
@@ -102,6 +104,7 @@ def build_engine_from_db(
         behaviors,
         schedule=schedule,
         has_penalty_shootout=room.has_penalty_shootout,
+        club_ids={Team.HOME: match.home_club_id, Team.AWAY: match.away_club_id},
     )
     for team, specs in substitutes.items():
         for spec in specs:
