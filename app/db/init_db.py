@@ -29,6 +29,10 @@ def crear_tablas(engine: Engine) -> None:
     room_columns = {column["name"] for column in inspector.get_columns("rooms")}
     match_columns = {column["name"] for column in inspector.get_columns("matches")}
     with engine.begin() as connection:
+        if "ranking_settled" not in room_columns:
+            connection.execute(text(
+                "ALTER TABLE rooms ADD COLUMN ranking_settled BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
         if "has_penalty_shootout" not in room_columns:
             connection.execute(text(
                 "ALTER TABLE rooms ADD COLUMN has_penalty_shootout "

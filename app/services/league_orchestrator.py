@@ -10,6 +10,7 @@ from app.models.player import Player
 from app.models.match_player import MatchPlayer
 from app.models.squad_entry import SquadEntry, ROLE_STARTER
 from app.services.match_runner import start_match
+from app.services.league_ranking import settle_league_ranking
 from app.core.config import get_settings
 from app.ws.manager import league_manager
 
@@ -251,10 +252,11 @@ async def run_next_league_match(bind, league_id: str):
         ).scalar_one_or_none()
 
         if not next_match:
-            room = db.get(Room, league_id)
-            if room:
-                room.status = ROOM_STATUS_FINISHED
+            if settle_league_ranking(db, league_id):
                 db.commit()
+                payload = get_league_lobby_payload(db, league_id)
+                if payload:
+                    await league_manager.broadcast_active(league_id, payload)
             return
 
         # Sincronizar las alineaciones (SquadEntry) con los jugadores reales del partido (MatchPlayer)

@@ -93,6 +93,11 @@ class Room(Base):
 
     type: Mapped[str] = mapped_column(String(10), nullable=False)
 
+    # Cierre y acreditación del ranking se confirman en una sola transacción.
+    ranking_settled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE")
+    )
+
     # Obligatorio en ligas, NULL en amistosos (lo fuerza el CHECK de limites).
     name: Mapped[str | None] = mapped_column(String(80), nullable=True)
 

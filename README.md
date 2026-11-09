@@ -439,3 +439,17 @@ coordina ejecuciones simultáneas). No hace falta borrar `futbot.db`.
 Al arrancar se crea `password_reset_tokens` mediante la inicialización habitual;
 no se necesita borrar la base ni modificar columnas de usuarios. Configurar la URL
 pública con HTTPS y reiniciar el backend después de cambiar variables de entorno.
+
+## Puntos del ranking global
+
+Al terminar todos los partidos de una liga pública, cada club recibe 3 puntos
+por victoria y 1 por empate, calculados a partir de los marcadores finales.
+Se suman al ranking previo del club. Las ligas privadas y los amistosos no suman.
+La acreditación y el cierre se guardan en una misma transacción y la marca
+`rooms.ranking_settled` impide volver a acreditar una liga ante reintentos.
+
+Al reiniciar el backend se agrega esa columna automáticamente a las bases
+existentes y se recuperan las ligas pendientes de acreditación cuyos partidos
+ya terminaron, incluidas las ligas históricas. No hay que borrar la base.
+Los puntos ya existentes se conservan; esta recuperación presupone que las
+ligas históricas no fueron acreditadas manualmente por fuera de la aplicación.
