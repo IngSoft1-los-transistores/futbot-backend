@@ -23,7 +23,9 @@ from app.models.club import Club
 from app.services.match_runner import (
     get_match_substitution_state,
     request_match_substitution,
+    get_live_engine,
 )
+from app.ws.behavior_change import handle_change_behavior
 from app.services.match_state import MatchAccessDenied, MatchNotFound, MatchStateUnavailable, authorize_match, get_match_state
 from app.ws.manager import manager
 
@@ -166,6 +168,10 @@ async def match_stream(socket: WebSocket, match_id: str, db: Session = Depends(g
                                 'error_code': 'SUBSTITUTION_INVALID_REQUEST',
                                 'message': 'outPlayerId e inPlayerId son obligatorios',
                             })
+                    elif isinstance(command, dict) and command.get('action') == 'CHANGE_BEHAVIOR':
+                        await handle_change_behavior(
+                            socket, bind, get_live_engine(match_id), club_id, command.get('payload'), match_id
+                        )
                     else:
                         await socket.send_json({
                             'type': 'error', 'ok': False,
