@@ -9,13 +9,16 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.core.security import create_access_token, decode_access_token
 from app.core.config import get_settings
-from app.engine.state import MatchPhase, Team
+from app.engine.state import MatchPhase, Team, publish_engine_tick
 from app.models.auth_session import AuthSession
 from app.engine.live_state import match_states
 from app.models.user import User
+from app.models.match import Match
+from app.models.room import Room
 from app.services.auth import start_session
 from app.services import match_runner
 from app.services.match_state import publish_match_state
+from app.schemas.match_state import MatchTick
 from scripts.demo_match import create_demo, make_tick
 
 
@@ -86,6 +89,58 @@ def test_waiting_socket_receives_first_state_and_final_state(client, db, demo):
         publish_match_state(db, demo.match_id, make_tick(demo, demo.duration), expected_revision=1)
         db.commit()
         assert socket.receive_json()['state']['status'] == 'finished'
+        with pytest.raises(WebSocketDisconnect) as closed:
+            socket.receive_json()
+        assert closed.value.code == 1000
+
+
+def test_final_penalty_events_are_delivered_before_socket_closes(
+    client, db, demo
+):
+    token = token_for(db, demo.emails[0])
+    match_states.clear()
+    with connect(client, demo.match_id) as socket:
+        assert authenticate(socket, token)["status"] == 409
+        publish_match_state(
+            db, demo.match_id, make_tick(demo, 0), expected_revision=0
+        )
+        db.commit()
+        assert socket.receive_json()["state"]["revision"] == 1
+
+        final_events = [
+            {"type": "PENALTY_SHOT_RESULT", "status": "missed"},
+            {"type": "PENALTIES_TIEBREAK", "winner": "away"},
+            {"type": "PENALTIES_FINISHED", "winner": "away"},
+        ]
+        final_data = make_tick(demo, 0).model_dump()
+        final_data.update(
+            status="finished",
+            phase="FINISHED",
+            current_time=demo.duration,
+            penalty={
+                "shooter_id": demo.player_ids[0][0],
+                "goalkeeper_id": demo.player_ids[1][0],
+                "score": {"home": 0, "away": 0},
+                "attempts": {"home": 5, "away": 5},
+                "seconds_remaining": 0,
+                "winner_club_id": demo.club_ids[1],
+            },
+        )
+        publish_engine_tick(
+            db,
+            demo.match_id,
+            MatchTick.model_validate(final_data),
+            expected_revision=1,
+            penalty_winner_club_id=demo.club_ids[1],
+            events=final_events,
+        )
+
+        received = [socket.receive_json() for _ in range(4)]
+        assert received[:3] == final_events
+        final_state = received[3]
+        assert final_state["type"] == "state"
+        assert final_state["state"]["status"] == "finished"
+        assert final_state["state"]["penalty"]["winner_club_id"] == demo.club_ids[1]
         with pytest.raises(WebSocketDisconnect) as closed:
             socket.receive_json()
         assert closed.value.code == 1000
@@ -213,6 +268,45 @@ def test_substitution_service_rejections_include_error_codes(demo, monkeypatch):
         demo.match_id, demo.club_ids[0], "out", "in"
     )
     assert not_a_participant["error_code"] == "SUBSTITUTION_CLUB_NOT_IN_MATCH"
+
+
+def test_penalty_snapshot_includes_active_shot_data(db, demo):
+    engine = match_runner.build_engine_from_db(db, demo.match_id, get_settings())
+    try:
+        engine._start_penalties()
+        engine._penalty_ticks = 3
+        roster = list(
+            db.scalars(
+                select(match_runner.MatchPlayer.player_id).where(
+                    match_runner.MatchPlayer.match_id == demo.match_id
+                )
+            )
+        )
+        club_of = {Team.HOME: demo.club_ids[0], Team.AWAY: demo.club_ids[1]}
+
+        tick = match_runner.capture_tick(engine, roster, club_of)
+
+        assert tick.status == "paused"
+        assert tick.phase == "PENALTIES"
+        assert str(tick.penalty.shooter_id) == engine._penalty_shooter.id
+        assert str(tick.penalty.goalkeeper_id) == engine._penalty_goalkeeper.id
+        assert tick.penalty.score.model_dump() == {"home": 0, "away": 0}
+        assert tick.penalty.seconds_remaining == max(
+            0, 10 - engine._penalty_ticks * engine.dt
+        )
+    finally:
+        engine.close()
+
+
+def test_engine_reads_shootout_setting_from_league_room(db, demo):
+    db.get(Room, demo.room_id).has_penalty_shootout = True
+    db.commit()
+
+    engine = match_runner.build_engine_from_db(db, demo.match_id, get_settings())
+    try:
+        assert engine.has_penalty_shootout is True
+    finally:
+        engine.close()
 
 
 def test_disallowed_origin_is_rejected(client, demo):
