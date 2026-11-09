@@ -5,7 +5,11 @@ from fastapi import WebSocket
 
 from app.db.session import SessionLocal
 from app.schemas.league import ListLeagueResponse
-from app.services.league_service import LeagueService, filter_by_name
+from app.services.league_service import (
+    LeagueService,
+    filter_by_name,
+    get_league_standings,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +25,7 @@ class LeaguesHub:
 
     def __init__(self):
         self.filters: dict[WebSocket, str] = {}
+        self.standings_subscribers: dict[WebSocket, str] = {}
         self.loop: asyncio.AbstractEventLoop | None = None
 
     def bind_loop(self, loop: asyncio.AbstractEventLoop | None) -> None:
@@ -36,6 +41,10 @@ class LeaguesHub:
 
     def remove(self, websocket: WebSocket) -> None:
         self.filters.pop(websocket, None)
+        self.standings_subscribers.pop(websocket, None)
+
+    def add_standings_subscriber(self, websocket: WebSocket, league_id: str) -> None:
+        self.standings_subscribers[websocket] = league_id
 
     async def send_list(self, websocket: WebSocket, leagues: list[ListLeagueResponse] | None = None) -> None:
         """Envía a una conexión el listado con su filtro aplicado."""
@@ -59,12 +68,44 @@ class LeaguesHub:
             except Exception:                        # conexión cerrada o rota: se da de baja
                 self.remove(websocket)
 
+    async def broadcast_standings_updated(self, league_id: str, match_id: str) -> None:
+        subscribers = [
+            websocket
+            for websocket, subscribed_league_id in self.standings_subscribers.items()
+            if subscribed_league_id == league_id
+        ]
+        if not subscribers:
+            return
+        with SessionLocal() as db:
+            standings = get_league_standings(db, league_id)
+        message = {
+            "type": "standings_updated",
+            "league_id": league_id,
+            "match_id": match_id,
+            "standings": [row.model_dump(mode="json") for row in standings],
+        }
+        for websocket in subscribers:
+            try:
+                await websocket.send_json(message)
+            except Exception:                        # conexión cerrada o rota: se da de baja
+                self.remove(websocket)
+
     def notify_changed(self) -> None:
         """Pide un aviso desde código síncrono. No hace nada si nadie mira el listado."""
         loop = self.loop
         if loop is None or loop.is_closed() or not self.filters:
             return
         future = asyncio.run_coroutine_threadsafe(self.broadcast(), loop)
+        future.add_done_callback(self._log_failure)
+
+    def notify_standings_updated(self, league_id: str, match_id: str) -> None:
+        """Pide un aviso tras confirmar un partido de liga."""
+        loop = self.loop
+        if loop is None or loop.is_closed() or league_id not in self.standings_subscribers.values():
+            return
+        future = asyncio.run_coroutine_threadsafe(
+            self.broadcast_standings_updated(league_id, match_id), loop
+        )
         future.add_done_callback(self._log_failure)
 
     @staticmethod

@@ -6,7 +6,11 @@ from threading import RLock
 
 from fastapi import WebSocket
 
+from sqlalchemy.orm import Session
+
 from app.schemas.match_state import MatchState
+from app.models.room import Room, ROOM_STATUS_FINISHED, ROOM_STATUS_CANCELLED
+from app.models.enrollment import Enrollment
 
 
 @dataclass(eq=False)
@@ -155,15 +159,101 @@ class LeagueRoomManager:
         self.waiting_rooms[league_id][club_id] = ws
         return True
 
+    async def connect_active(self, league_id: str, club_id: str, ws: WebSocket) -> None:
+        if league_id not in self.active_rooms:
+            self.active_rooms[league_id] = {}
+        self.active_rooms[league_id][club_id] = ws
+
     def disconnect_waiting(self, league_id: str, club_id: str):
         if league_id in self.waiting_rooms:
             self.waiting_rooms[league_id].pop(club_id, None)
             if not self.waiting_rooms[league_id]:
                 del self.waiting_rooms[league_id]
 
+    def disconnect_active(self, league_id: str, club_id: str) -> None:
+        if league_id in self.active_rooms:
+            self.active_rooms[league_id].pop(club_id, None)
+            if not self.active_rooms[league_id]:
+                del self.active_rooms[league_id]
+
     async def broadcast_waiting(self, league_id: str, message: dict, exclude_club_id: str = None):
         for club_id, ws in list(self.waiting_rooms.get(league_id, {}).items()):
             if club_id != exclude_club_id:
-                await ws.send_json(message)
+                try:
+                    await ws.send_json(message)
+                except Exception:
+                    self.disconnect_waiting(league_id, club_id)
+
+    async def broadcast_active(self, league_id: str, message: dict, exclude_club_id: str = None):
+        for club_id, ws in list(self.active_rooms.get(league_id, {}).items()):
+            if club_id != exclude_club_id:
+                try:
+                    await ws.send_json(message)
+                except Exception:
+                    self.disconnect_waiting(league_id, club_id)
 
 league_manager= LeagueRoomManager()
+
+class ActiveRoomsConnectionManager:
+    def __init__(self) -> None:
+        # Mapear user_id -> conjunto de websockets activos
+        self.connections: dict[str, set[WebSocket]] = {}
+
+    async def connect(self, user_id: str, ws: WebSocket) -> None:
+        await ws.accept()
+        self.connections.setdefault(user_id, set()).add(ws)
+
+    def disconnect(self, user_id: str, ws: WebSocket) -> None:
+        if user_id in self.connections:
+            self.connections[user_id].discard(ws)
+            if not self.connections[user_id]:
+                del self.connections[user_id]
+
+    async def send_active_rooms(self, user_id: str, club_id: str, db: Session, ws: WebSocket) -> None:
+        rooms = (
+            db.query(Room)
+            .join(Enrollment, Enrollment.room_id == Room.id)
+            .filter(
+                Enrollment.club_id == club_id,
+                ~Room.status.in_([ROOM_STATUS_FINISHED, ROOM_STATUS_CANCELLED])
+            )
+            .all()
+        )
+
+        data = [
+            {
+                "id": r.id,
+                "code": r.code,
+                "type": r.type,
+                "status": r.status
+            }
+            for r in rooms
+        ]
+        await ws.send_json(data)
+
+    async def broadcast_to_user(self, user_id: str, club_id: str, db: Session) -> None:
+        if user_id in self.connections:
+            rooms = (
+                db.query(Room)
+                .join(Enrollment, Enrollment.room_id == Room.id)
+                .filter(
+                    Enrollment.club_id == club_id,
+                    ~Room.status.in_([ROOM_STATUS_FINISHED, ROOM_STATUS_CANCELLED])
+                )
+                .all()
+            )
+            data = [
+                {
+                    "id": r.id,
+                    "code": r.code,
+                    "type": r.type,
+                    "status": r.status
+                }
+                for r in rooms
+            ]
+            for ws in list(self.connections[user_id]):
+                try:
+                    await ws.send_json(data)
+                except Exception:
+                    self.disconnect(user_id, ws)
+active_rooms_manager = ActiveRoomsConnectionManager()

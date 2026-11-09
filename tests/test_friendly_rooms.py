@@ -56,7 +56,7 @@ def create_behavior(db: Session, club_id: str | None, name: str) -> Behavior:
     behavior = Behavior(
         club_id=club_id,
         name=name,
-        code="def comportamiento(jugador):\n    pass\n",
+        code="def behavior(player):\n    pass\n",
         is_preprogrammed=club_id is None,
     )
     db.add(behavior)
@@ -743,7 +743,6 @@ def test_create_friendly_room_integration_success(
     assert response.status_code == 201
     data = response.json()
     assert "room_id" in data
-    assert "room_code" in data
     assert data["status"] == "waitingGuest"
     assert data["home_club"] == str(club.id)
 

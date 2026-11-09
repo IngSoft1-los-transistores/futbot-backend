@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials
 from jose import JWTError
 from sqlalchemy import update
@@ -21,7 +21,14 @@ from app.db.session import get_db
 from app.schemas.auth import UserRead, UserRegister
 from app.services.auth_services import create_user_with_club
 from app.ws.manager import manager
-from app.schemas.auth import VerifyEmailRequest, ResendVerificationRequest
+from app.schemas.auth import (
+    VerifyEmailRequest, ResendVerificationRequest, ForgotPasswordRequest, ResetPasswordRequest,
+)
+from app.services.password_reset import (
+    GENERIC_RESPONSE as PASSWORD_RESET_RESPONSE,
+    process_password_reset,
+    reset_password,
+)
 from app.services.auth import EmailNotVerifiedError
 from app.services.email_sender import EmailSender, get_email_sender
 from app.services.email_verification import issue_verification, verify_email, resend_verification
@@ -121,3 +128,23 @@ def resend_verification_endpoint(payload: ResendVerificationRequest, request: Re
                                  sender: EmailSender = Depends(get_email_sender)):
     ip = request.client.host if request.client else "unknown"
     return resend_verification(db, str(payload.email), ip, sender)
+
+
+@router.post("/forgot-password")
+def forgot_password_endpoint(
+    payload: ForgotPasswordRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    sender: EmailSender = Depends(get_email_sender),
+):
+    ip = request.client.host if request.client else "unknown"
+    background_tasks.add_task(process_password_reset, db.get_bind(), str(payload.email), ip, sender)
+    return PASSWORD_RESET_RESPONSE
+
+
+@router.post("/reset-password")
+def reset_password_endpoint(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
+    return reset_password(
+        db, payload.token.get_secret_value(), payload.new_password.get_secret_value(),
+    )

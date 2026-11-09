@@ -259,6 +259,22 @@ El cliente debe tomar decisiones por `error_code`, no por el texto del mensaje.
 Los eventos programados y aplicados se envían a todos los sockets autorizados de
 ese partido.
 
+En las ligas configuradas sin empates, si el tiempo regular termina igualado,
+el motor inicia automáticamente una tanda de penales: hasta cinco intentos por
+club, alternados, con un máximo de 10 segundos de juego por intento. Se emiten
+`PENALTIES_STARTED`, `PENALTY_SHOT_RESULT` y `PENALTIES_FINISHED` con el marcador
+parcial/final. `PENALTIES_STARTED` informa además `maxSecondsPerAttempt` y
+`tickRate` para sincronizar el reloj visual del cliente con los ticks del motor.
+Si la tanda termina igualada, `PENALTIES_TIEBREAK` anuncia el
+ganador elegido al azar. El ganador queda guardado en
+`matches.penalty_winner_club_id` junto con la publicación del estado final.
+Durante los penales, el snapshot conserva `status: "paused"` e incluye
+`phase: "penalties"` y `penalty` con `shooter_id`, `goalkeeper_id`, el marcador
+y los intentos de la tanda, `seconds_remaining` y, al finalizar,
+`winner_club_id`.
+Los eventos generados en el tick final se entregan antes del cierre normal del
+WebSocket.
+
 El motor mantiene titulares y suplentes en memoria mientras corre el partido.
 Esta operación no modifica la convocatoria original en la base de datos; los
 snapshots reflejan qué jugadores están en cancha en cada tick.
@@ -293,6 +309,16 @@ No agregar un `db.commit()` después de cada tick del motor. La función de bajo
 nivel `publish_match_state` solo publica; no crea goles ni confirma transacciones.
 El motor debe emitir los eventos de gol, no deducir autores a partir del marcador.
 La demo pasa por la capa del motor y sirve de ejemplo de integración.
+
+## Tabla de posiciones en vivo
+
+El endpoint `GET /api/leagues/{league_id}/standings` devuelve la tabla actual.
+Para recibir actualizaciones sin polling, conectar a
+`/api/leagues/{league_id}/standings/ws` y enviar primero
+`{"type":"auth","token":"<access_token>"}`. El servidor responde con
+`{"type":"standings","league_id":"...","standings":[...]}` y envía
+`standings_updated` con la tabla recalculada cada vez que termina un partido de
+esa liga.
 
 Ante una desconexión, la pantalla conserva el último snapshot con una advertencia
 y reconecta con espera progresiva de 1 a 10 segundos. Al reconectar recibe el
@@ -370,3 +396,46 @@ reenvío antes de su próximo login o refresh. Las sesiones de acceso ya emitida
 conservan su vigencia. Para actualizar una base existente, realizar el primer arranque
 con un solo proceso antes de levantar los demás workers (la migración aditiva no
 coordina ejecuciones simultáneas). No hace falta borrar `futbot.db`.
+
+## Recuperación de contraseña
+
+- `POST /api/auth/forgot-password`, body `{"email": "usuario@example.com"}`:
+  responde HTTP 200 con `{"detail": "Si corresponde, recibirás un correo para recuperar tu contraseña."}`
+  tanto para cuentas existentes como inexistentes, solicitudes limitadas y fallos de envío.
+  Un email con formato inválido devuelve 422. El envío se procesa con `BackgroundTasks`
+  después de responder, para que la demora SMTP no revele la existencia de la cuenta.
+  La tarea usa una sesión propia de base de datos; no es una cola persistente: si el
+  proceso termina antes de completarla, el usuario debe solicitar otro enlace.
+- `POST /api/auth/reset-password`, body `{"token": "...", "newPassword": "..."}`:
+  acepta contraseñas de 8 a 20 caracteres, igual que el registro. Devuelve 200 al
+  actualizar la contraseña con bcrypt y consumir el token en una misma transacción.
+  No inicia sesión automáticamente ni verifica el correo de una cuenta pendiente.
+- Un token desconocido, manipulado, reemplazado o ya usado devuelve 400 con
+  `PASSWORD_RESET_TOKEN_INVALID`. Uno vencido sin consumir devuelve 400 con
+  `PASSWORD_RESET_TOKEN_EXPIRED` y queda consumido; los siguientes intentos son inválidos.
+  Los tokens reemplazados también se marcan consumidos al presentarlos. Un token
+  desconocido no tiene un registro que se pueda consumir y no afecta enlaces legítimos.
+- Cada nuevo enlace invalida los anteriores pendientes. Los tokens se generan con
+  `secrets.token_urlsafe(48)` y solo se persiste su SHA-256. No se devuelven al solicitar
+  recuperación ni se registran en logs. Los tokens de verificación de correo y de
+  recuperación se almacenan por separado y no son intercambiables.
+- Por defecto el enlace dura 30 minutos. `PASSWORD_RESET_URL` apunta a la página
+  del frontend que recibirá `?token=...` y enviará el POST con la nueva contraseña.
+  El valor local es `http://localhost:5173/reset-password`; esta entrega implementa
+  únicamente el backend, por lo que esa pantalla debe agregarse en el frontend.
+- `PASSWORD_RESET_INTERVAL_SECONDS` limita las solicitudes por email (60 segundos),
+  `PASSWORD_RESET_IP_LIMIT` las solicitudes por IP (10) y
+  `PASSWORD_RESET_IP_WINDOW_SECONDS` la ventana por IP (3600 segundos).
+  Se reutiliza la tabla de contadores con ámbitos `reset-email` y `reset-ip`,
+  independientes de los límites de verificación. Las claves guardan hashes, y las
+  solicitudes de cuentas inexistentes también cuentan para los límites.
+- Al cambiar la contraseña se revocan las sesiones existentes del usuario: los tokens
+  de acceso y refresh dejan de autorizar nuevas solicitudes. Se notifica el cierre
+  a las suscripciones de partidos del proceso mediante el gestor WebSocket existente.
+- Se reutiliza la configuración SMTP actual y se agrega `EmailSender.send_password_reset`.
+  Los tests usan un emisor simulado y no envían correos. Los errores de envío se registran
+  únicamente con su tipo y códigos SMTP, sin contraseñas, destinatarios ni enlaces.
+
+Al arrancar se crea `password_reset_tokens` mediante la inicialización habitual;
+no se necesita borrar la base ni modificar columnas de usuarios. Configurar la URL
+pública con HTTPS y reiniciar el backend después de cambiar variables de entorno.
