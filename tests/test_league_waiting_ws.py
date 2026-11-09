@@ -204,7 +204,7 @@ def test_ws_creator_starts_league(client: TestClient, db: Session, test_league: 
 
         assert response is not None
         assert response["type"] == "league_started"
-        assert response["redirect_url"] == f"/league/{test_league.id}/active"
+        assert response["redirect_url"] == f"/league/{test_league.id}/live"
 
 
 def test_ws_creator_cancels_league(client: TestClient, db: Session, test_league: Room, club: Club):
